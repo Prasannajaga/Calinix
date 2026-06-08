@@ -1,10 +1,21 @@
 #![allow(dead_code)]
 
-pub type PodId = usize;
-pub type BlockHash = u64;
-pub type SessionId = String;
+use crate::bitmap::HostBitmap;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Single,
+    Disaggregated,
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub mode: Mode,
+    pub prompt: String,
+    pub hits: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PodRole {
     Prefill,
     Decode,
@@ -13,78 +24,56 @@ pub enum PodRole {
 
 #[derive(Clone, Debug)]
 pub struct Pod {
-    pub id: PodId,
+    pub id: usize,
     pub role: PodRole,
-    pub node: String,
-    pub addr: String,
-    pub healthy: bool,
-    pub max_concurrency: usize,
+    pub node: &'static str,
+}
+
+impl Pod {
+    pub fn new(id: usize, role: PodRole, node: &'static str) -> Self {
+        Self { id, role, node }
+    }
 }
 
 #[derive(Clone, Debug)]
-pub enum CacheEvent {
-    Registered {
-        pod_id: PodId,
-        block_hash: BlockHash,
-    },
-    Evicted {
-        pod_id: PodId,
-        block_hash: BlockHash,
-    },
-    Shutdown {
-        pod_id: PodId,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub struct RequestContext {
-    pub session_id: SessionId,
+pub struct PreparedRequest {
     pub prompt: String,
-    pub tokens: Vec<String>,
-    pub block_hashes: Vec<BlockHash>,
-    pub cumulative_hashes: Vec<BlockHash>,
-    pub mode: RoutingMode,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RoutingMode {
-    Single,
-    Disaggregated,
+    pub cumulative_hashes: Vec<u64>,
 }
 
 #[derive(Clone, Debug)]
-pub struct CandidateScore {
-    pub pod_id: PodId,
-    pub cache_prefix_len: usize,
-    pub cache_score: f64,
-    pub load_score: f64,
-    pub locality_score: f64,
-    pub sticky_score: f64,
-    pub final_score: f64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StepRole {
-    Single,
-    Prefill,
-    Decode,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FailurePolicy {
-    FailFast,
-    RetryNextBest,
+pub struct FilteredCandidates {
+    pub role: PodRole,
+    pub hosts: HostBitmap,
 }
 
 #[derive(Clone, Debug)]
-pub struct RoutingStep {
-    pub role: StepRole,
-    pub pod_id: PodId,
-    pub failure_policy: FailurePolicy,
-    pub cache_hint: Option<String>,
+pub struct ScoredCandidate {
+    pub pod_id: usize,
+    pub prefix_len: usize,
+    pub score: usize,
 }
 
 #[derive(Clone, Debug)]
-pub struct RoutingPlan {
-    pub steps: Vec<RoutingStep>,
+pub struct PickedPod {
+    pub pod_id: usize,
+}
+
+#[derive(Clone, Debug)]
+pub enum ExecutionPlan {
+    Single {
+        pod_id: usize,
+    },
+    Disaggregated {
+        prefill_pod: usize,
+        decode_pod: usize,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RouteResult {
+    pub prefill_pod: Option<usize>,
+    pub decode_pod: Option<usize>,
+    pub response_pod: Option<usize>,
+    pub text: String,
 }

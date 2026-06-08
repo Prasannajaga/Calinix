@@ -1,5 +1,3 @@
-use crate::types::BlockHash;
-
 pub const BLOCK_SIZE: usize = 4;
 const FNV_OFFSET: u64 = 14695981039346656037;
 const FNV_PRIME: u64 = 1099511628211;
@@ -36,14 +34,14 @@ pub fn combine_cumulative(prev: u64, block_hash: u64) -> u64 {
     fnv1a64(&bytes)
 }
 
-pub fn prompt_to_block_hashes(prompt: &str) -> Vec<BlockHash> {
+pub fn prompt_to_block_hashes(prompt: &str) -> Vec<u64> {
     tokenize(prompt)
         .chunks(BLOCK_SIZE)
         .map(hash_block)
         .collect()
 }
 
-pub fn cumulative_hashes_from_blocks(block_hashes: &[BlockHash]) -> Vec<BlockHash> {
+pub fn cumulative_hashes_from_blocks(block_hashes: &[u64]) -> Vec<u64> {
     let mut cumulative = Vec::with_capacity(block_hashes.len());
     let mut prev = 0;
     for block_hash in block_hashes {
@@ -53,6 +51,6 @@ pub fn cumulative_hashes_from_blocks(block_hashes: &[BlockHash]) -> Vec<BlockHas
     cumulative
 }
 
-pub fn prompt_to_cumulative_hashes(prompt: &str) -> Vec<BlockHash> {
+pub fn prompt_to_cumulative_hashes(prompt: &str) -> Vec<u64> {
     cumulative_hashes_from_blocks(&prompt_to_block_hashes(prompt))
 }

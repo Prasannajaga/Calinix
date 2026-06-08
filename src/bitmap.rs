@@ -1,4 +1,4 @@
-use crate::types::PodId;
+#![allow(dead_code)]
 
 pub const MAX_PODS: usize = 256;
 const WORDS: usize = 4;
@@ -22,21 +22,21 @@ impl HostBitmap {
         bitmap
     }
 
-    pub fn set(&mut self, pod_id: PodId) {
+    pub fn set(&mut self, pod_id: usize) {
         if pod_id >= MAX_PODS {
             return;
         }
         self.words[pod_id / BITS_PER_WORD] |= 1_u64 << (pod_id % BITS_PER_WORD);
     }
 
-    pub fn clear(&mut self, pod_id: PodId) {
+    pub fn clear(&mut self, pod_id: usize) {
         if pod_id >= MAX_PODS {
             return;
         }
         self.words[pod_id / BITS_PER_WORD] &= !(1_u64 << (pod_id % BITS_PER_WORD));
     }
 
-    pub fn contains(&self, pod_id: PodId) -> bool {
+    pub fn contains(&self, pod_id: usize) -> bool {
         if pod_id >= MAX_PODS {
             return false;
         }
