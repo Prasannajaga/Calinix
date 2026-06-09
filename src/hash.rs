@@ -1,8 +1,8 @@
-use crate::types::BlockHash;
-
 pub const BLOCK_SIZE: usize = 4;
 const FNV_OFFSET: u64 = 14695981039346656037;
 const FNV_PRIME: u64 = 1099511628211;
+
+pub type BlockHash = u64;
 
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = FNV_OFFSET;
@@ -20,7 +20,7 @@ pub fn tokenize(prompt: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn hash_block(tokens: &[String]) -> u64 {
+pub fn hash_block(tokens: &[String]) -> BlockHash {
     let mut bytes = Vec::new();
     for token in tokens {
         bytes.extend_from_slice(token.as_bytes());
@@ -29,7 +29,7 @@ pub fn hash_block(tokens: &[String]) -> u64 {
     fnv1a64(&bytes)
 }
 
-pub fn combine_cumulative(prev: u64, block_hash: u64) -> u64 {
+pub fn combine_cumulative(prev: BlockHash, block_hash: BlockHash) -> BlockHash {
     let mut bytes = [0_u8; 16];
     bytes[..8].copy_from_slice(&prev.to_le_bytes());
     bytes[8..].copy_from_slice(&block_hash.to_le_bytes());
@@ -54,5 +54,18 @@ pub fn cumulative_hashes_from_blocks(block_hashes: &[BlockHash]) -> Vec<BlockHas
 }
 
 pub fn prompt_to_cumulative_hashes(prompt: &str) -> Vec<BlockHash> {
-    cumulative_hashes_from_blocks(&prompt_to_block_hashes(prompt))
+    let block_hashes = prompt_to_block_hashes(prompt);
+    cumulative_hashes_from_blocks(&block_hashes)
+}
+
+pub fn make_synthetic_chain(chain_id: u64, blocks: usize) -> Vec<BlockHash> {
+    let mut out = Vec::with_capacity(blocks);
+    let mut prev = FNV_OFFSET;
+    for i in 0..blocks {
+        let local = fnv1a64(format!("chain={chain_id}:block={i}").as_bytes());
+        let cumulative = combine_cumulative(prev, local);
+        out.push(cumulative);
+        prev = cumulative;
+    }
+    out
 }

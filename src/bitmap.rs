@@ -1,4 +1,4 @@
-use crate::types::PodId;
+#![allow(dead_code)]
 
 pub const MAX_PODS: usize = 256;
 const WORDS: usize = 4;
@@ -22,21 +22,21 @@ impl HostBitmap {
         bitmap
     }
 
-    pub fn set(&mut self, pod_id: PodId) {
+    pub fn set(&mut self, pod_id: usize) {
         if pod_id >= MAX_PODS {
             return;
         }
         self.words[pod_id / BITS_PER_WORD] |= 1_u64 << (pod_id % BITS_PER_WORD);
     }
 
-    pub fn clear(&mut self, pod_id: PodId) {
+    pub fn clear(&mut self, pod_id: usize) {
         if pod_id >= MAX_PODS {
             return;
         }
         self.words[pod_id / BITS_PER_WORD] &= !(1_u64 << (pod_id % BITS_PER_WORD));
     }
 
-    pub fn contains(&self, pod_id: PodId) -> bool {
+    pub fn contains(&self, pod_id: usize) -> bool {
         if pod_id >= MAX_PODS {
             return false;
         }
@@ -80,14 +80,18 @@ impl HostBitmap {
 
     pub fn iter_set_bits(&self) -> Vec<usize> {
         let mut bits = Vec::new();
+        self.for_each_set_bit(|pod_id| bits.push(pod_id));
+        bits
+    }
+
+    pub fn for_each_set_bit(&self, mut visit: impl FnMut(usize)) {
         for (word_index, word) in self.words.iter().enumerate() {
             let mut remaining = *word;
             while remaining != 0 {
                 let bit = remaining.trailing_zeros() as usize;
-                bits.push(word_index * BITS_PER_WORD + bit);
+                visit(word_index * BITS_PER_WORD + bit);
                 remaining &= remaining - 1;
             }
         }
-        bits
     }
 }
