@@ -52,7 +52,10 @@ fn prefix_binary_search_finds_longest_cumulative_match() {
     indexer.register(1, hashes[2]);
     indexer.register(2, hashes[0]);
 
-    let candidates = HostBitmap::full_for_count(3);
+    let candidates = HostBitmap::full_for_count(124);
+    println!("hashes: {:?}", candidates);
+    println!("candidates: {:?}", candidates.iter_set_bits());
+
     let lengths = longest_prefix_lengths_for_candidates(&indexer, &hashes, candidates);
 
     assert_eq!(lengths[0], 3);

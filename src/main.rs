@@ -49,6 +49,9 @@ fn print_usage() {
     eprintln!(
         "  cargo run -- bench-part2-compare --iterations 100000 --pods 64 --blocks 32 --dropoffs 4"
     );
+    eprintln!(
+        "  cargo run -- bench-part2-repr-compare --iterations 100000 --pods 64 --blocks 32 --dropoffs 4"
+    );
     eprintln!("  cargo run -- bench-part2-shards --chains 10000 --blocks-per-chain 64");
     eprintln!(
         "  cargo run -- bench-part2-concurrency --readers 8 --writers 2 --duration-secs 10 --pods 64 --blocks 32"
@@ -71,6 +74,12 @@ fn run_microbench_command(args: &[String]) -> bool {
             parse_usize(args, "--dropoffs", 4),
         ),
         "bench-part2-compare" => bench_part2::bench_part2_compare(
+            parse_usize(args, "--iterations", 100_000),
+            parse_usize(args, "--pods", 64),
+            parse_usize(args, "--blocks", 32),
+            parse_usize(args, "--dropoffs", 4),
+        ),
+        "bench-part2-repr-compare" => bench_part2::bench_part2_repr_compare(
             parse_usize(args, "--iterations", 100_000),
             parse_usize(args, "--pods", 64),
             parse_usize(args, "--blocks", 32),
