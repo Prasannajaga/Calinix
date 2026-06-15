@@ -1,14 +1,15 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::bitmap::{HostBitmap, MAX_PODS};
 use crate::hash::{make_synthetic_chain, BlockHash};
 use crate::indexer::{shard_for_fibonacci, shard_for_low_bits, ShardedBlockIndexer, SHARDS};
-use crate::metrics::summarize_ns;
+use crate::metrics::{summarize_ns, LatencyStats};
 
 pub struct SyntheticPart2State {
     pub indexer: ShardedBlockIndexer,
@@ -39,6 +40,20 @@ struct SearchFrame {
     candidate_pods: HostBitmap,
 }
 
+#[derive(Clone, Debug)]
+struct ListSearchFrame {
+    min_prefix_depth: usize,
+    max_prefix_depth: usize,
+    candidate_pods: Vec<usize>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ArraySearchFrame {
+    min_prefix_depth: usize,
+    max_prefix_depth: usize,
+    candidate_pods: PodArray,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct QueryCounters {
     shard_lookups: usize,
@@ -55,6 +70,129 @@ struct ShardStats {
     empty: usize,
     skew_ratio: f64,
     hottest_shard: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PodArray {
+    pods: [bool; MAX_PODS],
+}
+
+impl PodArray {
+    fn empty() -> Self {
+        Self {
+            pods: [false; MAX_PODS],
+        }
+    }
+
+    fn full_for_count(count: usize) -> Self {
+        let mut out = Self::empty();
+        for pod in 0..count.min(MAX_PODS) {
+            out.pods[pod] = true;
+        }
+        out
+    }
+
+    fn set(&mut self, pod: usize) {
+        if pod < MAX_PODS {
+            self.pods[pod] = true;
+        }
+    }
+
+    fn contains(&self, pod: usize) -> bool {
+        pod < MAX_PODS && self.pods[pod]
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pods.iter().all(|pod| !pod)
+    }
+
+    fn and(self, other: Self) -> Self {
+        let mut out = Self::empty();
+        for pod in 0..MAX_PODS {
+            out.pods[pod] = self.pods[pod] && other.pods[pod];
+        }
+        out
+    }
+
+    fn minus(self, other: Self) -> Self {
+        let mut out = Self::empty();
+        for pod in 0..MAX_PODS {
+            out.pods[pod] = self.pods[pod] && !other.pods[pod];
+        }
+        out
+    }
+
+    fn for_each_set(self, mut visit: impl FnMut(usize)) {
+        for (pod, is_set) in self.pods.iter().enumerate() {
+            if *is_set {
+                visit(pod);
+            }
+        }
+    }
+}
+
+struct ListBlockIndexer {
+    shards: Vec<RwLock<HashMap<BlockHash, Vec<usize>>>>,
+    alive: RwLock<Vec<usize>>,
+}
+
+impl ListBlockIndexer {
+    fn new(pods: usize) -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| RwLock::new(HashMap::new())).collect(),
+            alive: RwLock::new((0..pods.min(MAX_PODS)).collect()),
+        }
+    }
+
+    fn register(&mut self, pod: usize, hash: BlockHash) {
+        let shard = shard_for_fibonacci(hash);
+        let mut guard = self.shards[shard].write().expect("list shard poisoned");
+        let owners = guard.entry(hash).or_default();
+        if owners.binary_search(&pod).is_err() {
+            owners.push(pod);
+            owners.sort_unstable();
+        }
+    }
+
+    fn owners_alive(&self, hash: BlockHash) -> Vec<usize> {
+        let shard = shard_for_fibonacci(hash);
+        let guard = self.shards[shard].read().expect("list shard poisoned");
+        let alive = self.alive.read().expect("list alive poisoned");
+        guard
+            .get(&hash)
+            .map(|owners| list_intersection(owners, &alive))
+            .unwrap_or_default()
+    }
+}
+
+struct ArrayBlockIndexer {
+    shards: Vec<RwLock<HashMap<BlockHash, PodArray>>>,
+    alive: RwLock<PodArray>,
+}
+
+impl ArrayBlockIndexer {
+    fn new(pods: usize) -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| RwLock::new(HashMap::new())).collect(),
+            alive: RwLock::new(PodArray::full_for_count(pods)),
+        }
+    }
+
+    fn register(&mut self, pod: usize, hash: BlockHash) {
+        let shard = shard_for_fibonacci(hash);
+        let mut guard = self.shards[shard].write().expect("array shard poisoned");
+        guard.entry(hash).or_insert_with(PodArray::empty).set(pod);
+    }
+
+    fn owners_alive(&self, hash: BlockHash) -> PodArray {
+        let shard = shard_for_fibonacci(hash);
+        let guard = self.shards[shard].read().expect("array shard poisoned");
+        let alive = *self.alive.read().expect("array alive poisoned");
+        guard
+            .get(&hash)
+            .map(|owners| owners.and(alive))
+            .unwrap_or_else(PodArray::empty)
+    }
 }
 
 pub fn build_synthetic_state(pods: usize, blocks: usize, dropoffs: usize) -> SyntheticPart2State {
@@ -90,12 +228,12 @@ pub fn build_synthetic_state(pods: usize, blocks: usize, dropoffs: usize) -> Syn
         }
     }
 
-    println!(
-        "Built synthetic state: pods={}, blocks={}, dropoffs={}, distinct_depths={}",
-        pods, blocks, dropoffs, distinct_depths
-    );
+    // println!(
+    //     "Built synthetindexeric state: pods={}, blocks={}, dropoffs={}, distinct_depths={}",
+    //     pods, blocks, dropoffs, distinct_depths
+    // );
 
-    println!("sharedIndexer: {:?}", indexer.shard_entry_counts());
+    // println!("sharedIndexer: {:?}", indexer.shard_entry_counts());
 
     SyntheticPart2State {
         indexer,
@@ -179,6 +317,130 @@ fn query_prefix_depths_binary_into(
         }
         if !pods_below_probe.is_empty() {
             stack.push(SearchFrame {
+                min_prefix_depth: frame.min_prefix_depth,
+                max_prefix_depth: probe_prefix_depth - 1,
+                candidate_pods: pods_below_probe,
+            });
+        }
+    }
+
+    counters
+}
+
+fn query_prefix_depths_binary_list_into(
+    indexer: &ListBlockIndexer,
+    query_chain: &[BlockHash],
+    candidate_pods: &[usize],
+    depths: &mut [usize],
+    stack: &mut Vec<ListSearchFrame>,
+) -> QueryCounters {
+    depths.fill(0);
+    stack.clear();
+
+    let mut counters = QueryCounters {
+        bitmap_intersections: 1,
+        ..QueryCounters::default()
+    };
+    stack.push(ListSearchFrame {
+        min_prefix_depth: 0,
+        max_prefix_depth: query_chain.len(),
+        candidate_pods: list_intersection(
+            candidate_pods,
+            &indexer.alive.read().expect("list alive poisoned"),
+        ),
+    });
+
+    while let Some(frame) = stack.pop() {
+        counters.search_frames += 1;
+        if frame.candidate_pods.is_empty() {
+            continue;
+        }
+
+        if frame.min_prefix_depth == frame.max_prefix_depth {
+            for pod in frame.candidate_pods {
+                depths[pod] = frame.min_prefix_depth;
+            }
+            continue;
+        }
+
+        let probe_prefix_depth = (frame.min_prefix_depth + frame.max_prefix_depth + 1) / 2;
+        let pods_with_probe_prefix = indexer.owners_alive(query_chain[probe_prefix_depth - 1]);
+        counters.shard_lookups += 1;
+
+        let pods_at_or_above_probe =
+            list_intersection(&frame.candidate_pods, &pods_with_probe_prefix);
+        let pods_below_probe = list_minus(&frame.candidate_pods, &pods_at_or_above_probe);
+        counters.bitmap_intersections += 2;
+
+        if !pods_at_or_above_probe.is_empty() {
+            stack.push(ListSearchFrame {
+                min_prefix_depth: probe_prefix_depth,
+                max_prefix_depth: frame.max_prefix_depth,
+                candidate_pods: pods_at_or_above_probe,
+            });
+        }
+        if !pods_below_probe.is_empty() {
+            stack.push(ListSearchFrame {
+                min_prefix_depth: frame.min_prefix_depth,
+                max_prefix_depth: probe_prefix_depth - 1,
+                candidate_pods: pods_below_probe,
+            });
+        }
+    }
+
+    counters
+}
+
+fn query_prefix_depths_binary_array_into(
+    indexer: &ArrayBlockIndexer,
+    query_chain: &[BlockHash],
+    candidate_pods: PodArray,
+    depths: &mut [usize],
+    stack: &mut Vec<ArraySearchFrame>,
+) -> QueryCounters {
+    depths.fill(0);
+    stack.clear();
+
+    let mut counters = QueryCounters {
+        bitmap_intersections: 1,
+        ..QueryCounters::default()
+    };
+    stack.push(ArraySearchFrame {
+        min_prefix_depth: 0,
+        max_prefix_depth: query_chain.len(),
+        candidate_pods: candidate_pods.and(*indexer.alive.read().expect("array alive poisoned")),
+    });
+
+    while let Some(frame) = stack.pop() {
+        counters.search_frames += 1;
+        if frame.candidate_pods.is_empty() {
+            continue;
+        }
+
+        if frame.min_prefix_depth == frame.max_prefix_depth {
+            frame
+                .candidate_pods
+                .for_each_set(|pod| depths[pod] = frame.min_prefix_depth);
+            continue;
+        }
+
+        let probe_prefix_depth = (frame.min_prefix_depth + frame.max_prefix_depth + 1) / 2;
+        let pods_with_probe_prefix = indexer.owners_alive(query_chain[probe_prefix_depth - 1]);
+        counters.shard_lookups += 1;
+
+        let pods_at_or_above_probe = frame.candidate_pods.and(pods_with_probe_prefix);
+        let pods_below_probe = frame.candidate_pods.minus(pods_at_or_above_probe);
+        counters.bitmap_intersections += 2;
+
+        if !pods_at_or_above_probe.is_empty() {
+            stack.push(ArraySearchFrame {
+                min_prefix_depth: probe_prefix_depth,
+                max_prefix_depth: frame.max_prefix_depth,
+                candidate_pods: pods_at_or_above_probe,
+            });
+        }
+        if !pods_below_probe.is_empty() {
+            stack.push(ArraySearchFrame {
                 min_prefix_depth: frame.min_prefix_depth,
                 max_prefix_depth: probe_prefix_depth - 1,
                 candidate_pods: pods_below_probe,
@@ -279,7 +541,7 @@ pub fn bench_part2_query(iterations: usize, pods: usize, blocks: usize, dropoffs
     println!("query_blocks={blocks}");
     println!("distinct_dropoff_depths={dropoffs}");
     println!("iterations={iterations}");
-    print_synthetic_state(&state, pods);
+    // print_synthetic_state(&state, pods);
     println!();
     println!("latency_p50_us={:.3}", ns_to_us(stats.p50_ns));
     println!("latency_p50_ms={:.6}", ns_to_ms(stats.p50_ns));
@@ -357,7 +619,7 @@ pub fn bench_part2_compare(iterations: usize, pods: usize, blocks: usize, dropof
     println!("query_blocks={blocks}");
     println!("distinct_dropoff_depths={dropoffs}");
     println!("iterations={iterations}");
-    print_synthetic_state(&state, pods);
+    // print_synthetic_state(&state, pods);
     println!();
     println!("binary_p50_us={:.3}", ns_to_us(binary_stats.p50_ns));
     println!("binary_p50_ms={:.6}", ns_to_ms(binary_stats.p50_ns));
@@ -390,6 +652,103 @@ pub fn bench_part2_compare(iterations: usize, pods: usize, blocks: usize, dropof
     println!(
         "lookup_reduction={:.3}",
         ratio_f64(naive_avg_lookups, binary_avg_lookups)
+    );
+    println!("checksum={checksum}");
+}
+
+pub fn bench_part2_repr_compare(iterations: usize, pods: usize, blocks: usize, dropoffs: usize) {
+    let iterations = iterations.max(1);
+    let pods = pods.max(1).min(MAX_PODS);
+    let state = build_synthetic_state(pods, blocks, dropoffs);
+    let list_indexer = build_list_indexer(&state.query_chain, &state.expected_depths, pods);
+    let array_indexer = build_array_indexer(&state.query_chain, &state.expected_depths, pods);
+    let list_candidate_pods = state.candidate_pods.iter_set_bits();
+    let array_candidate_pods = pod_array_from_bitmap(state.candidate_pods);
+
+    let mut bitmap_samples = Vec::with_capacity(iterations);
+    let mut list_samples = Vec::with_capacity(iterations);
+    let mut array_samples = Vec::with_capacity(iterations);
+    let mut bitmap_depths = vec![0usize; MAX_PODS];
+    let mut list_depths = vec![0usize; MAX_PODS];
+    let mut array_depths = vec![0usize; MAX_PODS];
+    let mut bitmap_stack = Vec::with_capacity(blocks.saturating_add(MAX_PODS));
+    let mut list_stack = Vec::with_capacity(blocks.saturating_add(MAX_PODS));
+    let mut array_stack = Vec::with_capacity(blocks.saturating_add(MAX_PODS));
+    let mut bitmap_counters = QueryCounters::default();
+    let mut list_counters = QueryCounters::default();
+    let mut array_counters = QueryCounters::default();
+    let mut checksum = 0usize;
+
+    for _ in 0..iterations {
+        let start = Instant::now();
+        let counters = query_prefix_depths_binary_into(
+            &state.indexer,
+            &state.query_chain,
+            state.candidate_pods,
+            &mut bitmap_depths,
+            &mut bitmap_stack,
+        );
+        bitmap_samples.push(start.elapsed().as_nanos());
+        add_query_counters(&mut bitmap_counters, counters);
+
+        let start = Instant::now();
+        let counters = query_prefix_depths_binary_list_into(
+            &list_indexer,
+            &state.query_chain,
+            &list_candidate_pods,
+            &mut list_depths,
+            &mut list_stack,
+        );
+        list_samples.push(start.elapsed().as_nanos());
+        add_query_counters(&mut list_counters, counters);
+
+        let start = Instant::now();
+        let counters = query_prefix_depths_binary_array_into(
+            &array_indexer,
+            &state.query_chain,
+            array_candidate_pods,
+            &mut array_depths,
+            &mut array_stack,
+        );
+        array_samples.push(start.elapsed().as_nanos());
+        add_query_counters(&mut array_counters, counters);
+
+        assert_eq!(&bitmap_depths[..pods], &list_depths[..pods]);
+        assert_eq!(&bitmap_depths[..pods], &array_depths[..pods]);
+        checksum = checksum.wrapping_add(bitmap_depths.iter().take(pods).sum::<usize>());
+    }
+
+    let bitmap_stats = summarize_ns(&mut bitmap_samples);
+    let list_stats = summarize_ns(&mut list_samples);
+    let array_stats = summarize_ns(&mut array_samples);
+
+    println!("PART2 REPRESENTATION COMPARISON: BITMAP VS LIST VS ARRAY");
+    println!("--------------------------------------------------");
+    println!("pods={pods}");
+    println!("query_blocks={blocks}");
+    println!("distinct_dropoff_depths={dropoffs}");
+    println!("iterations={iterations}");
+    println!();
+    print_repr_stats("bitmap", &bitmap_stats, bitmap_counters, iterations);
+    println!();
+    print_repr_stats("list", &list_stats, list_counters, iterations);
+    println!(
+        "list_vs_bitmap_p50={:.3}",
+        ratio(list_stats.p50_ns, bitmap_stats.p50_ns)
+    );
+    println!(
+        "list_vs_bitmap_p99={:.3}",
+        ratio(list_stats.p99_ns, bitmap_stats.p99_ns)
+    );
+    println!();
+    print_repr_stats("array", &array_stats, array_counters, iterations);
+    println!(
+        "array_vs_bitmap_p50={:.3}",
+        ratio(array_stats.p50_ns, bitmap_stats.p50_ns)
+    );
+    println!(
+        "array_vs_bitmap_p99={:.3}",
+        ratio(array_stats.p99_ns, bitmap_stats.p99_ns)
     );
     println!("checksum={checksum}");
 }
@@ -639,6 +998,105 @@ fn print_shard_stats(name: &str, stats: &ShardStats) {
     println!("  empty_shards={}", stats.empty);
     println!("  skew_ratio={:.6}", stats.skew_ratio);
     println!("  hottest_shard={}", stats.hottest_shard);
+}
+
+fn print_repr_stats(name: &str, stats: &LatencyStats, counters: QueryCounters, iterations: usize) {
+    println!("{name}_p50_us={:.3}", ns_to_us(stats.p50_ns));
+    println!("{name}_p50_ms={:.6}", ns_to_ms(stats.p50_ns));
+    println!("{name}_p95_us={:.3}", ns_to_us(stats.p95_ns));
+    println!("{name}_p95_ms={:.6}", ns_to_ms(stats.p95_ns));
+    println!("{name}_p99_us={:.3}", ns_to_us(stats.p99_ns));
+    println!("{name}_p99_ms={:.6}", ns_to_ms(stats.p99_ns));
+    println!("{name}_max_us={:.3}", ns_to_us(stats.max_ns));
+    println!("{name}_max_ms={:.6}", ns_to_ms(stats.max_ns));
+    println!(
+        "{name}_avg_shard_lookups={:.3}",
+        counters.shard_lookups as f64 / iterations as f64
+    );
+    println!(
+        "{name}_avg_set_intersections={:.3}",
+        counters.bitmap_intersections as f64 / iterations as f64
+    );
+    println!(
+        "{name}_avg_search_frames={:.3}",
+        counters.search_frames as f64 / iterations as f64
+    );
+}
+
+fn add_query_counters(total: &mut QueryCounters, next: QueryCounters) {
+    total.shard_lookups += next.shard_lookups;
+    total.bitmap_intersections += next.bitmap_intersections;
+    total.search_frames += next.search_frames;
+}
+
+fn build_list_indexer(
+    query_chain: &[BlockHash],
+    expected_depths: &[usize],
+    pods: usize,
+) -> ListBlockIndexer {
+    let mut indexer = ListBlockIndexer::new(pods);
+    for (pod, depth) in expected_depths.iter().take(pods).enumerate() {
+        for hash in query_chain.iter().take(*depth) {
+            indexer.register(pod, *hash);
+        }
+    }
+    indexer
+}
+
+fn build_array_indexer(
+    query_chain: &[BlockHash],
+    expected_depths: &[usize],
+    pods: usize,
+) -> ArrayBlockIndexer {
+    let mut indexer = ArrayBlockIndexer::new(pods);
+    for (pod, depth) in expected_depths.iter().take(pods).enumerate() {
+        for hash in query_chain.iter().take(*depth) {
+            indexer.register(pod, *hash);
+        }
+    }
+    indexer
+}
+
+fn pod_array_from_bitmap(bitmap: HostBitmap) -> PodArray {
+    let mut out = PodArray::empty();
+    bitmap.for_each_set_bit(|pod| out.set(pod));
+    out
+}
+
+fn list_intersection(left: &[usize], right: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(left.len().min(right.len()));
+    let mut left_index = 0;
+    let mut right_index = 0;
+
+    while left_index < left.len() && right_index < right.len() {
+        match left[left_index].cmp(&right[right_index]) {
+            std::cmp::Ordering::Equal => {
+                out.push(left[left_index]);
+                left_index += 1;
+                right_index += 1;
+            }
+            std::cmp::Ordering::Less => left_index += 1,
+            std::cmp::Ordering::Greater => right_index += 1,
+        }
+    }
+
+    out
+}
+
+fn list_minus(left: &[usize], right: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(left.len());
+    let mut right_index = 0;
+
+    for pod in left {
+        while right_index < right.len() && right[right_index] < *pod {
+            right_index += 1;
+        }
+        if right_index >= right.len() || right[right_index] != *pod {
+            out.push(*pod);
+        }
+    }
+
+    out
 }
 
 fn print_synthetic_state(state: &SyntheticPart2State, pods: usize) {
