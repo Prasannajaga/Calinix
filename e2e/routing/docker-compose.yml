@@ -1,0 +1,57 @@
+services:
+  calinix:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["/etc/calinix/config.yaml"]
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./config.yaml:/etc/calinix/config.yaml:ro
+    depends_on:
+      - single-1
+      - single-2
+      - prefill-1
+      - prefill-2
+      - decode-1
+      - decode-2
+
+  single-1: &mock-pod
+    image: python:3.12-slim
+    working_dir: /app
+    command: ["python", "/app/mock_pod.py"]
+    volumes:
+      - ./mock_pod.py:/app/mock_pod.py:ro
+    environment:
+      SERVICE_NAME: single-1
+      PORT: "8000"
+
+  single-2:
+    <<: *mock-pod
+    environment:
+      SERVICE_NAME: single-2
+      PORT: "8000"
+
+  prefill-1:
+    <<: *mock-pod
+    environment:
+      SERVICE_NAME: prefill-1
+      PORT: "8000"
+
+  prefill-2:
+    <<: *mock-pod
+    environment:
+      SERVICE_NAME: prefill-2
+      PORT: "8000"
+
+  decode-1:
+    <<: *mock-pod
+    environment:
+      SERVICE_NAME: decode-1
+      PORT: "8000"
+
+  decode-2:
+    <<: *mock-pod
+    environment:
+      SERVICE_NAME: decode-2
+      PORT: "8000"
