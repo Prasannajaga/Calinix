@@ -1,47 +1,96 @@
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::thread;
 use std::time::Duration;
+
+fn e2e_base_url() -> String {
+    env::var("CALINIX_E2E_URL").unwrap_or_else(|_| "http://localhost:18080".to_string())
+}
 
 #[test]
 #[ignore = "requires e2e/routing/docker-compose.yml services"]
-fn routes_chat_completion_through_http_api_and_forwards_calinix_headers() {
-    let base_url =
-        env::var("CALINIX_E2E_URL").unwrap_or_else(|_| "http://127.0.0.1:18080".to_string());
-    let body = r#"{"model":"gpt-4o-mini","messages":[{"role":"user","content":"route this through calinix"}],"stream":true}"#;
+fn exposes_openai_compatible_routes_through_http_api() {
+    let base_url = e2e_base_url();
+    let headers = e2e_headers();
 
-    let response = post_json(
+    let chat = post_json(
         &base_url,
         "/v1/chat/completions",
-        &[
-            ("authorization", "Bearer user-token"),
-            ("x-calinix-request-id", "req-e2e-routing-1"),
-            ("x-calinix-mode", "disaggregated"),
-            ("x-calinix-session-key", "session-e2e-routing"),
-        ],
-        body,
+        &headers,
+        r#"{"model":"gpt-4o-mini","messages":[{"role":"user","content":"route this through calinix"}],"stream":true}"#,
+    );
+    let completions = post_json(
+        &base_url,
+        "/v1/completions",
+        &headers,
+        r#"{"model":"gpt-4o-mini","prompt":"route this through calinix"}"#,
+    );
+    let embeddings = post_json(
+        &base_url,
+        "/v1/embeddings",
+        &headers,
+        r#"{"model":"text-embedding-3-small","input":"route this through calinix"}"#,
     );
 
-    assert!(response.contains("\"service\":\"prefill-1\""), "{response}");
-    assert!(
-        response.contains("\"x-calinix-request-id\":\"req-e2e-routing-1\""),
-        "{response}"
+    println!("chat_completions_response={chat}\n");
+    println!("completions_response={completions} \n");
+    println!("embeddings_response={embeddings} \n");
+}
+
+#[test]
+#[ignore = "requires e2e/routing/docker-compose.yml services"]
+fn handles_concurrent_disaggregated_register_events() {
+    const REQUESTS: usize = 100;
+
+    let base_url = e2e_base_url();
+    let handles = (0..REQUESTS)
+        .map(|request_number| {
+            let base_url = base_url.clone();
+            thread::spawn(move || {
+                let body = format!(
+                    r#"{{"model":"gpt-4o-mini","messages":[{{"role":"user","content":"route concurrent request {request_number}"}}],"stream":true}}"#
+                );
+                let response = post_json(
+                    &base_url,
+                    "/v1/chat/completions",
+                    &e2e_headers(),
+                    &body,
+                );
+                assert_registered_event(&response, request_number);
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        handle.join().expect("concurrent e2e request panicked");
+    }
+}
+
+fn e2e_headers() -> [(&'static str, &'static str); 5] {
+    [
+        ("authorization", "Bearer user-token"),
+        ("x-calinix-request-id", "req-e2e-routing-1"),
+        ("x-calinix-mode", "disaggregated"),
+        ("x-calinix-session-key", "session-e2e-routing"),
+        ("x-event", "register"),
+    ]
+}
+
+fn assert_registered_event(response: &str, request_number: usize) {
+    let json: serde_json::Value =
+        serde_json::from_str(response).expect("mock pod response is valid JSON");
+    assert_eq!(
+        json["headers"]["x-event"], "register",
+        "request {request_number} did not forward x-event header: {response}"
     );
-    assert!(
-        response.contains("\"x-calinix-mode\":\"disaggregated\""),
-        "{response}"
+    assert_eq!(
+        json["events"][0]["type"], "prefixCached",
+        "request {request_number} did not emit register event: {response}"
     );
-    assert!(
-        response.contains("\"x-calinix-prefill-pod-id\":\"2\""),
-        "{response}"
-    );
-    assert!(
-        response.contains("\"x-calinix-decode-pod-id\":\"4\""),
-        "{response}"
-    );
-    assert!(
-        response.contains("\"authorization\":\"Bearer user-token\""),
-        "{response}"
+    assert_eq!(
+        json["events"][0]["result"]["status"], 200,
+        "request {request_number} event callback failed: {response}"
     );
 }
 

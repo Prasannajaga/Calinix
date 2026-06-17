@@ -2,7 +2,7 @@ use crate::cache_registry::HostBitmap;
 use crate::routing::context::RoutingContext;
 use crate::routing::filter::RequiredRole;
 use crate::session::StickyStore;
-use crate::upstream::{LoadState, PodEndpoint, PodId, UpstreamCatalog};
+use crate::upstream::{LoadState, PodId, UpstreamCatalog};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CandidateScore {
@@ -49,8 +49,6 @@ impl ScoreStage {
             .session_key
             .as_deref()
             .and_then(|session_key| sticky.previous_pod(session_key));
-        let prefill = selected_prefill.and_then(|pod_id| upstreams.pod(pod_id));
-
         let mut scores = Vec::new();
         candidates.for_each_set_bit(|pod_id| {
             let Ok(pod_id) = u16::try_from(pod_id) else {
@@ -71,7 +69,7 @@ impl ScoreStage {
             } else {
                 0.0
             };
-            let locality_score = locality_score(role, pod, prefill);
+            let locality_score = locality_score(role, selected_prefill);
             let final_score = cache_score * weights.cache
                 + load_score * weights.load
                 + sticky_score * weights.sticky
@@ -106,20 +104,14 @@ impl ScoreStage {
     }
 }
 
-fn locality_score(role: RequiredRole, pod: &PodEndpoint, prefill: Option<&PodEndpoint>) -> f64 {
+fn locality_score(role: RequiredRole, prefill: Option<PodId>) -> f64 {
     if role != RequiredRole::Decode {
         return 0.0;
     }
 
-    let Some(prefill) = prefill else {
+    if prefill.is_none() {
         return 0.0;
-    };
-
-    if pod.node.is_some() && pod.node == prefill.node {
-        100.0
-    } else if pod.zone.is_some() && pod.zone == prefill.zone {
-        60.0
-    } else {
-        0.0
     }
+
+    0.0
 }

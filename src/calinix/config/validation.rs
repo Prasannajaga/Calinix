@@ -17,6 +17,26 @@ pub fn validate_config(config: &CalinixConfig) -> Result<(), String> {
         return Err("cacheRegistry.maxPods must be non-zero".to_string());
     }
 
+    if config.health.endpoint.trim().is_empty() {
+        return Err("health.endpoint must be non-empty".to_string());
+    }
+
+    if config.health.interval_ms == 0 {
+        return Err("health.intervalMs must be non-zero".to_string());
+    }
+
+    if config.health.timeout_ms == 0 {
+        return Err("health.timeoutMs must be non-zero".to_string());
+    }
+
+    if config.health.healthy_threshold == 0 {
+        return Err("health.healthyThreshold must be non-zero".to_string());
+    }
+
+    if config.health.unhealthy_threshold == 0 {
+        return Err("health.unhealthyThreshold must be non-zero".to_string());
+    }
+
     if config.cache_registry.max_pods > MAX_CONFIG_PODS {
         return Err(format!(
             "cacheRegistry.maxPods must be <= {MAX_CONFIG_PODS}"

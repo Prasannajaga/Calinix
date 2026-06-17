@@ -3,7 +3,7 @@ use crate::cache_registry::{
     shard_for_fibonacci_with_count, ShardedBlockIndexer, DEFAULT_SHARD_COUNT,
 };
 use crate::config::{validate_config, CalinixConfig};
-use crate::upstream::{PodRole, RuntimeRegistry};
+use crate::upstream::RuntimeRegistry;
 
 mod routing;
 
@@ -70,14 +70,11 @@ fn init_startup_builds_runtime_registry_from_yaml() {
 
     let pods = &registry.pod_table.pods;
     assert_eq!(pods[0].pod_id, 0);
-    assert_eq!(pods[0].external_id, "single-1");
-    assert_eq!(pods[0].role, PodRole::Single);
+    assert_eq!(pods[0].address, "http://single-pod-1:8000");
     assert_eq!(pods[2].pod_id, 2);
-    assert_eq!(pods[2].external_id, "prefill-1");
-    assert_eq!(pods[2].role, PodRole::Prefill);
+    assert_eq!(pods[2].address, "http://prefill-pod-1:8001");
     assert_eq!(pods[4].pod_id, 4);
-    assert_eq!(pods[4].external_id, "decode-1");
-    assert_eq!(pods[4].role, PodRole::Decode);
+    assert_eq!(pods[4].address, "http://decode-pod-1:9001");
 }
 
 #[test]

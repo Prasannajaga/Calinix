@@ -51,6 +51,7 @@ impl ShardedBlockIndexer {
     }
 
     pub fn register(&self, pod_id: usize, cumulative_hash: BlockHash) {
+        println!("registering pod {pod_id} for hash {cumulative_hash}");
         self.observe_pod(pod_id);
 
         let shard = self.shard_for(cumulative_hash);
@@ -69,6 +70,7 @@ impl ShardedBlockIndexer {
     }
 
     pub fn evict(&self, pod_id: usize, cumulative_hash: BlockHash) {
+        println!("evicting pod {pod_id} for hash {cumulative_hash}");
         let shard = self.shard_for(cumulative_hash);
         let mut guard = self.shards[shard].write().expect("index shard poisoned");
         if let Some(owners) = guard.get_mut(&cumulative_hash) {
@@ -94,6 +96,7 @@ impl ShardedBlockIndexer {
     }
 
     pub fn shutdown(&self, pod_id: usize) {
+        println!("shutting down pod {pod_id}");
         self.alive
             .write()
             .expect("alive bitmap poisoned")

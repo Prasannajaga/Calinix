@@ -23,5 +23,5 @@ done
 curl -fsS "$CALINIX_E2E_URL/health" >/dev/null
 
 CALINIX_E2E_URL="$CALINIX_E2E_URL" \
-  cargo test routes_chat_completion_through_http_api_and_forwards_calinix_headers \
+  cargo test exposes_openai_compatible_routes_through_http_api \
   -- --ignored --nocapture

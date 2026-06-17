@@ -22,16 +22,11 @@ impl LoadState {
     }
 
     pub fn can_accept(&self, pod: &PodEndpoint) -> bool {
-        pod.healthy && pod.max_conns > 0 && self.inflight(pod.id) < pod.max_conns
+        self.inflight.get(pod.id as usize).is_some()
     }
 
     pub fn score(&self, pod: &PodEndpoint) -> f64 {
-        if pod.max_conns == 0 {
-            return 0.0;
-        }
-
-        let usage = self.inflight(pod.id) as f64 / pod.max_conns as f64;
-        ((1.0 - usage).clamp(0.0, 1.0)) * 100.0
+        100.0 / (self.inflight(pod.id) + 1) as f64
     }
 
     pub fn set_inflight_for_test(&self, pod_id: PodId, value: usize) {

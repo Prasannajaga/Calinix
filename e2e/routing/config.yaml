@@ -7,7 +7,7 @@ gateway:
 health:
   endpoint: /health
   intervalMs: 2000
-  timeoutMs: 500
+  timeoutMs: 2000
   healthyThreshold: 2
   unhealthyThreshold: 3
 

@@ -1,3 +1,6 @@
+# Force-build only the Calinix service:
+# docker compose -f docker-compose.yml build --no-cache calinix
+
 services:
   calinix:
     build:
@@ -8,50 +11,86 @@ services:
       - "18080:8080"
     volumes:
       - ./config.yaml:/etc/calinix/config.yaml:ro
-    depends_on:
-      - single-1
-      - single-2
-      - prefill-1
-      - prefill-2
-      - decode-1
-      - decode-2
+    # depends_on:
+    #   single-1:
+    #     condition: service_healthy
+    #   single-2:
+    #     condition: service_healthy
+    #   prefill-1:
+    #     condition: service_healthy
+    #   prefill-2:
+    #     condition: service_healthy
+    #   decode-1:
+    #     condition: service_healthy
+    #   decode-2:
+    #     condition: service_healthy
 
   single-1: &mock-pod
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
     working_dir: /app
-    command: ["python", "/app/mock_pod.py"]
+    ports:
+      - "18101:8000"
     volumes:
       - ./mock_pod.py:/app/mock_pod.py:ro
+    # healthcheck:
+    #   test:
+    #     [
+    #       "CMD",
+    #       "python",
+    #       "-c",
+    #       "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+    #     ]
+    #   interval: 20s
+    #   timeout: 10s
+    #   retries: 30
     environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: single-1
       PORT: "8000"
 
   single-2:
     <<: *mock-pod
+    ports:
+      - "18102:8000"
     environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: single-2
       PORT: "8000"
 
   prefill-1:
     <<: *mock-pod
+    ports:
+      - "18201:8000"
     environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: prefill-1
       PORT: "8000"
 
   prefill-2:
     <<: *mock-pod
+    ports:
+      - "18202:8000"
     environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: prefill-2
       PORT: "8000"
 
   decode-1:
     <<: *mock-pod
+    ports:
+      - "18301:8000"
     environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: decode-1
       PORT: "8000"
 
   decode-2:
     <<: *mock-pod
+    ports:
+      - "18302:8000"
     environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: decode-2
       PORT: "8000"

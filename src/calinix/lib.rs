@@ -2,6 +2,7 @@ pub mod app;
 pub mod cache_registry;
 pub mod config;
 pub mod protocol;
+pub mod proxy;
 pub mod routing;
 pub mod session;
 #[cfg(test)]

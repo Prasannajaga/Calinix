@@ -54,15 +54,9 @@ impl FilterStage {
             let Ok(pod_id) = u16::try_from(pod_id) else {
                 return;
             };
-            let Some(pod) = upstreams.pod(pod_id) else {
+            if upstreams.pod(pod_id).is_none() {
                 return;
             };
-            if route_policy.require_healthy && !pod.healthy {
-                return;
-            }
-            if pod.max_conns == 0 || !pod.capabilities.supports(role.into()) {
-                return;
-            }
             filtered.set(pod_id as usize);
         });
 

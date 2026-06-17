@@ -4,10 +4,8 @@ use serde::Serialize;
 
 use crate::cache_registry::{CacheRegistry, HostBitmap};
 use crate::config::{CalinixConfig, PodConfig};
-use crate::upstream::roles::{PodCapabilities, PodRole};
 
 pub type PodId = u16;
-pub type PodGeneration = u64;
 pub type UpstreamId = u16;
 
 #[derive(Clone, Debug, Serialize)]
@@ -15,16 +13,7 @@ pub type UpstreamId = u16;
 pub struct PodEndpoint {
     pub id: PodId,
     pub pod_id: PodId,
-    pub generation: PodGeneration,
     pub address: String,
-    pub external_id: String,
-    pub url: String,
-    pub capabilities: PodCapabilities,
-    pub role: PodRole,
-    pub healthy: bool,
-    pub max_conns: usize,
-    pub node: Option<String>,
-    pub zone: Option<String>,
 }
 
 #[derive(Debug)]
@@ -56,21 +45,18 @@ impl RuntimeRegistry {
 
         push_pods(
             &config.upstreams.single.pods,
-            PodRole::Single,
             &mut pods,
             &mut by_external_id,
             &mut single_pods,
         )?;
         push_pods(
             &config.upstreams.dispatch.prefill.pods,
-            PodRole::Prefill,
             &mut pods,
             &mut by_external_id,
             &mut prefill_pods,
         )?;
         push_pods(
             &config.upstreams.dispatch.decode.pods,
-            PodRole::Decode,
             &mut pods,
             &mut by_external_id,
             &mut decode_pods,
@@ -95,7 +81,6 @@ impl RuntimeRegistry {
 
 fn push_pods(
     configured: &[PodConfig],
-    role: PodRole,
     pods: &mut Vec<PodEndpoint>,
     by_external_id: &mut HashMap<String, PodId>,
     role_bitmap: &mut HostBitmap,
@@ -108,16 +93,7 @@ fn push_pods(
         pods.push(PodEndpoint {
             id: pod_id,
             pod_id,
-            generation: 0,
             address: pod.url.clone(),
-            external_id: pod.id.clone(),
-            url: pod.url.clone(),
-            capabilities: PodCapabilities::from(role),
-            role: role.clone(),
-            healthy: true,
-            max_conns: usize::MAX,
-            node: None,
-            zone: None,
         });
     }
     Ok(())
