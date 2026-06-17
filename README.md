@@ -11,18 +11,56 @@ calinix tells which pods is suited for each request
 it owns the load balancer you own the your inference logic
 without any hassel.
 
-## Run
+## config 
 
-Cargo requires `--` before binary arguments:
 
-```bash
-cargo run -- --single "the cat sat on the table" --hits 1000
-cargo run -- --disaggregated "the cat sat on the table" --hits 1000
-cargo run -- bench-part2-query --iterations 100000 --pods 64 --blocks 32 --dropoffs 4
-cargo run -- bench-part2-compare --iterations 100000 --pods 64 --blocks 32 --dropoffs 4
-cargo run -- bench-part2-shards --chains 10000 --blocks-per-chain 64
-cargo run -- bench-part2-concurrency --readers 8 --writers 2 --duration-secs 10 --pods 64 --blocks 32
+```yaml
+version: 1
+
+gateway:
+  port: 8080
+  strategy: cacheAware
+
+health:
+  endpoint: /health
+  intervalMs: 2000
+  timeoutMs: 2000
+  healthyThreshold: 2
+  unhealthyThreshold: 3
+
+cacheRegistry:
+  enabled: true
+  maxPods: 256
+  shardsCount: 256
+  staleTtlMs: 30000
+
+upstreams:
+  single:
+    mode: single
+    pods:
+      - id: single-1
+        url: http://single-1:8000
+      - id: single-2
+        url: http://single-2:8000
+
+  dispatch:
+    mode: dispatch
+    prefill:
+      pods:
+        - id: prefill-1
+          url: http://prefill-1:8000
+        - id: prefill-2
+          url: http://prefill-2:8000
+
+    decode:
+      pods:
+        - id: decode-1
+          url: http://decode-1:8000
+        - id: decode-2
+          url: http://decode-2:8000
 ```
+ 
+
 
 ## workflow
 

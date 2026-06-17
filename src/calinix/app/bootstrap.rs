@@ -4,10 +4,10 @@ use std::time::Instant;
 
 use axum::body::{to_bytes, Body, Bytes};
 use axum::extract::{Extension, State};
-use axum::http::{Request, StatusCode, Uri};
+use axum::http::{Method, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -16,7 +16,6 @@ use tracing::{info, Level};
 use crate::app::state::{AppState, RegistrySummary};
 use crate::cache_registry::BlockHash;
 use crate::config::{load_config, CalinixConfig};
-use crate::proxy::forward::forward_http_post;
 use crate::routing::pipeline::{RoutedRequest, RoutingPipeline};
 use crate::upstream::{start_health_poller, PodId, RuntimeRegistry};
 
@@ -54,10 +53,8 @@ pub async fn run(config: CalinixConfig) -> Result<(), String> {
 }
 
 fn router(state: AppState, health_endpoint: &str) -> Router {
-    let openai_routes = Router::new()
-        .route("/v1/chat/completions", post(openai_compatible_endpoint))
-        .route("/v1/completions", post(openai_compatible_endpoint))
-        .route("/v1/embeddings", post(openai_compatible_endpoint))
+    let proxy_routes = Router::new()
+        .route("/*path", any(openai_compatible_endpoint))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             route_openai_request,
@@ -68,7 +65,7 @@ fn router(state: AppState, health_endpoint: &str) -> Router {
         .route("/events/register", post(register_event))
         .route("/events/evict", post(evict_event))
         .route("/events/shutdown", post(shutdown_event))
-        .merge(openai_routes);
+        .merge(proxy_routes);
 
     app = app.route(normalize_route_path(health_endpoint).as_str(), get(health));
     if health_endpoint != "/health" {
@@ -107,11 +104,19 @@ async fn register_event(
         .registry
         .cache_registry
         .mark_pod_alive(pod_id as usize);
-    state
+    let registered = state
         .registry
         .cache_registry
         .register_prefix(pod_id as usize, cumulative_hash);
-    info!(pod_id, cumulative_hash, "cache prefix registered");
+    if registered {
+        info!(pod_id, cumulative_hash, "cache prefix registered");
+    } else {
+        tracing::debug!(
+            pod_id,
+            cumulative_hash,
+            "cache prefix register skipped; already present"
+        );
+    }
 
     Json(CacheEventResponse::registered(pod_id, cumulative_hash)).into_response()
 }
@@ -181,7 +186,6 @@ async fn route_openai_request(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    println!("Routing request: {} {}", req.method(), req.uri().path());
     let (mut parts, body) = req.into_parts();
     let body = match to_bytes(body, usize::MAX).await {
         Ok(body) => body,
@@ -196,7 +200,10 @@ async fn route_openai_request(
 
     match RoutingPipeline::default().route_openai_request(
         state.registry.as_ref(),
+        state.loads.as_ref(),
+        state.sticky.as_ref(),
         parts.uri.path(),
+        parts.method.as_str(),
         &parts.headers,
         &body,
     ) {
@@ -209,22 +216,54 @@ async fn route_openai_request(
 }
 
 async fn openai_compatible_endpoint(
+    State(state): State<AppState>,
     Extension(routed): Extension<RoutedRequest>,
+    method: Method,
     uri: Uri,
     body: Bytes,
 ) -> Response {
-    let target_address = routed.plan.target_address().to_string();
-    let path = uri.path().to_string();
+    let path = uri
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str())
+        .unwrap_or_else(|| uri.path())
+        .to_string();
     let headers = routed.forwarding_headers.clone();
     let body = body.to_vec();
 
-    let upstream = forward_http_post(&target_address, &path, &headers, &body).await;
+    let upstream = state
+        .forwarder
+        .forward_with_fallback(
+            method,
+            &routed.plan,
+            state.registry.as_ref(),
+            state.loads.as_ref(),
+            &path,
+            &headers,
+            &body,
+        )
+        .await;
 
     match upstream {
         Ok(upstream) => {
+            if upstream.status.is_success() {
+                state
+                    .registry
+                    .cache_registry
+                    .mark_pod_alive(upstream.pod_id as usize);
+                state
+                    .registry
+                    .cache_registry
+                    .register_chain(upstream.pod_id as usize, &routed.cumulative_hashes);
+                if let Some(session_key) = routed.session_key {
+                    state.sticky.remember(session_key, upstream.pod_id);
+                }
+            }
             let mut response = Response::builder().status(upstream.status);
-            if let Some(content_type) = upstream.headers.get("content-type") {
-                response = response.header("content-type", content_type);
+            for (name, value) in &upstream.headers {
+                if is_hop_by_hop_response_header(name) {
+                    continue;
+                }
+                response = response.header(name, value);
             }
             response
                 .body(upstream.body.into())
@@ -232,6 +271,21 @@ async fn openai_compatible_endpoint(
         }
         Err(err) => (StatusCode::BAD_GATEWAY, err).into_response(),
     }
+}
+
+fn is_hop_by_hop_response_header(name: &http::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+            | "content-length"
+    )
 }
 
 fn log_registry_startup(registry: &RuntimeRegistry) {

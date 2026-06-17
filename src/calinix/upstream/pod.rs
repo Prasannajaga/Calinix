@@ -5,6 +5,9 @@ use serde::Serialize;
 use crate::cache_registry::{CacheRegistry, HostBitmap};
 use crate::config::{CalinixConfig, PodConfig};
 
+use super::pool::{UpstreamCatalog, UpstreamGroup};
+use super::roles::PodRole;
+
 pub type PodId = u16;
 pub type UpstreamId = u16;
 
@@ -25,6 +28,7 @@ pub struct PodTable {
 #[derive(Debug)]
 pub struct RuntimeRegistry {
     pub pod_table: PodTable,
+    pub upstreams: UpstreamCatalog,
     pub single_pods: HostBitmap,
     pub prefill_pods: HostBitmap,
     pub decode_pods: HostBitmap,
@@ -62,21 +66,71 @@ impl RuntimeRegistry {
             &mut decode_pods,
         )?;
 
+        let upstreams = catalog_from_parts(&pods, &single_pods, &prefill_pods, &decode_pods);
+
         Ok(Self {
             pod_table: PodTable {
                 pods,
                 by_external_id,
             },
+            upstreams,
             single_pods,
             prefill_pods,
             decode_pods,
-            cache_registry: CacheRegistry::new_empty_alive(total_pods),
+            cache_registry: CacheRegistry::with_shards_empty_alive(
+                total_pods,
+                config.cache_registry.shards_count,
+            ),
         })
     }
 
     pub fn total_pods(&self) -> usize {
         self.pod_table.pods.len()
     }
+}
+
+fn catalog_from_parts(
+    pods: &[PodEndpoint],
+    single_pods: &HostBitmap,
+    prefill_pods: &HostBitmap,
+    decode_pods: &HostBitmap,
+) -> UpstreamCatalog {
+    UpstreamCatalog {
+        pods: pods.to_vec(),
+        groups: vec![
+            UpstreamGroup {
+                id: 1,
+                name: "single".to_string(),
+                role: PodRole::Single,
+                pods: pod_ids_from_bitmap(single_pods),
+                pod_bitmap: single_pods.clone(),
+            },
+            UpstreamGroup {
+                id: 2,
+                name: "prefill".to_string(),
+                role: PodRole::Prefill,
+                pods: pod_ids_from_bitmap(prefill_pods),
+                pod_bitmap: prefill_pods.clone(),
+            },
+            UpstreamGroup {
+                id: 3,
+                name: "decode".to_string(),
+                role: PodRole::Decode,
+                pods: pod_ids_from_bitmap(decode_pods),
+                pod_bitmap: decode_pods.clone(),
+            },
+        ],
+    }
+}
+
+fn pod_ids_from_bitmap(bitmap: &HostBitmap) -> Vec<PodId> {
+    let mut pod_ids = Vec::new();
+    bitmap.for_each_set_bit(|pod_id| {
+        if let Ok(pod_id) = PodId::try_from(pod_id) {
+            pod_ids.push(pod_id);
+        }
+    });
+    pod_ids
 }
 
 fn push_pods(

@@ -7,11 +7,11 @@ use hyper::Uri;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tracing::{info, warn};
 
 use crate::config::HealthConfig;
-use crate::upstream::{PodEndpoint, RuntimeRegistry};
+use crate::upstream::{PodEndpoint, PodId, RuntimeRegistry};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HealthResult {
@@ -76,30 +76,33 @@ pub fn start_health_poller(registry: Arc<RuntimeRegistry>, config: HealthConfig)
         loop {
             interval.tick().await;
 
+            let mut checks = JoinSet::new();
             for pod in &registry.pod_table.pods {
-                let result = if check_pod_health(&client, pod, &config.endpoint, timeout).await {
-                    HealthResult::Healthy
-                } else {
-                    HealthResult::Unhealthy
-                };
-
-                let state = &mut states[pod.id as usize];
-                if let Some(alive) = state.observe(result, healthy_threshold, unhealthy_threshold) {
-                    if alive {
-                        registry.cache_registry.mark_pod_alive(pod.id as usize);
-                        info!(
-                            pod_id = pod.id,
-                            address = %pod.address,
-                            "pod marked alive by health poller"
-                        );
+                let client = client.clone();
+                let pod = pod.clone();
+                let endpoint = config.endpoint.clone();
+                checks.spawn(async move {
+                    let result = if check_pod_health(&client, &pod, &endpoint, timeout).await {
+                        HealthResult::Healthy
                     } else {
-                        registry.cache_registry.shutdown_pod(pod.id as usize);
-                        warn!(
-                            pod_id = pod.id,
-                            address = %pod.address,
-                            "pod marked unhealthy by health poller"
-                        );
-                    }
+                        HealthResult::Unhealthy
+                    };
+                    (pod.id, pod.address, result)
+                });
+            }
+
+            while let Some(join_result) = checks.join_next().await {
+                match join_result {
+                    Ok((pod_id, address, result)) => apply_health_result(
+                        registry.as_ref(),
+                        &mut states,
+                        pod_id,
+                        address,
+                        result,
+                        healthy_threshold,
+                        unhealthy_threshold,
+                    ),
+                    Err(err) => warn!(%err, "health check task failed"),
                 }
             }
         }
@@ -107,6 +110,39 @@ pub fn start_health_poller(registry: Arc<RuntimeRegistry>, config: HealthConfig)
 }
 
 type HealthClient = Client<HttpConnector, Empty<Bytes>>;
+
+fn apply_health_result(
+    registry: &RuntimeRegistry,
+    states: &mut [PodHealthState],
+    pod_id: PodId,
+    address: String,
+    result: HealthResult,
+    healthy_threshold: u8,
+    unhealthy_threshold: u8,
+) {
+    let Some(state) = states.get_mut(pod_id as usize) else {
+        warn!(pod_id, "health result for unknown pod");
+        return;
+    };
+
+    if let Some(alive) = state.observe(result, healthy_threshold, unhealthy_threshold) {
+        if alive {
+            registry.cache_registry.mark_pod_alive(pod_id as usize);
+            info!(
+                pod_id,
+                address = %address,
+                "pod marked alive by health poller"
+            );
+        } else {
+            registry.cache_registry.shutdown_pod(pod_id as usize);
+            warn!(
+                pod_id,
+                address = %address,
+                "pod marked unhealthy by health poller"
+            );
+        }
+    }
+}
 
 async fn check_pod_health(
     client: &HealthClient,
@@ -181,8 +217,12 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{health_uri, join_paths, parse_http_url, PodHealthState};
+    use std::collections::HashMap;
+
+    use super::{apply_health_result, health_uri, join_paths, parse_http_url, PodHealthState};
+    use crate::cache_registry::{CacheRegistry, HostBitmap};
     use crate::upstream::health::HealthResult;
+    use crate::upstream::{PodEndpoint, PodTable, RuntimeRegistry, UpstreamCatalog};
 
     #[test]
     fn joins_base_path_and_health_endpoint() {
@@ -227,5 +267,47 @@ mod tests {
         assert_eq!(state.observe(HealthResult::Healthy, 2, 2), None);
         assert_eq!(state.observe(HealthResult::Unhealthy, 2, 2), None);
         assert_eq!(state.observe(HealthResult::Unhealthy, 2, 2), Some(false));
+    }
+
+    #[test]
+    fn health_result_thresholds_update_registry_alive_state() {
+        let registry = RuntimeRegistry {
+            pod_table: PodTable {
+                pods: vec![PodEndpoint {
+                    id: 0,
+                    pod_id: 0,
+                    address: "http://pod-0:8000".to_string(),
+                }],
+                by_external_id: HashMap::new(),
+            },
+            upstreams: UpstreamCatalog::default(),
+            single_pods: HostBitmap::full_for_count(1),
+            prefill_pods: HostBitmap::empty(),
+            decode_pods: HostBitmap::empty(),
+            cache_registry: CacheRegistry::new_empty_alive(1),
+        };
+        let mut states = vec![PodHealthState::new()];
+
+        apply_health_result(
+            &registry,
+            &mut states,
+            0,
+            "http://pod-0:8000".to_string(),
+            HealthResult::Healthy,
+            1,
+            1,
+        );
+        assert!(registry.cache_registry.alive().contains(0));
+
+        apply_health_result(
+            &registry,
+            &mut states,
+            0,
+            "http://pod-0:8000".to_string(),
+            HealthResult::Unhealthy,
+            1,
+            1,
+        );
+        assert!(!registry.cache_registry.alive().contains(0));
     }
 }

@@ -1,21 +1,22 @@
 use http::HeaderMap;
 
-use crate::cache_registry::HostBitmap;
+use crate::cache_registry::{BlockHash, HostBitmap};
 use crate::protocol::routing_headers::{inject_routing_headers, CalinixMode};
 use crate::routing::context::RoutingContext;
 use crate::routing::filter::{FilterStage, RequiredRole, RoutePolicy};
-use crate::routing::pick::PickStage;
 use crate::routing::plan::RoutingPlan;
 use crate::routing::prepare::{PrepareInput, PrepareStage};
 use crate::routing::score::{ScoreStage, ScoreWeights};
 use crate::routing::RoutingError;
 use crate::session::StickyStore;
-use crate::upstream::{LoadState, PodRole, RuntimeRegistry, UpstreamCatalog, UpstreamGroup};
+use crate::upstream::{LoadState, RuntimeRegistry, UpstreamCatalog};
 
 #[derive(Clone)]
 pub struct RoutedRequest {
     pub plan: RoutingPlan,
     pub forwarding_headers: HeaderMap,
+    pub session_key: Option<String>,
+    pub cumulative_hashes: Vec<BlockHash>,
 }
 
 pub struct RoutingPipeline {
@@ -65,7 +66,10 @@ impl RoutingPipeline {
     pub fn route_openai_request(
         &self,
         registry: &RuntimeRegistry,
+        loads: &LoadState,
+        sticky: &StickyStore,
         path: &str,
+        method: &str,
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<RoutedRequest, RoutingError> {
@@ -75,33 +79,31 @@ impl RoutingPipeline {
         }
         .run(PrepareInput {
             path,
-            method: "POST",
+            method,
             headers,
             body,
         })?;
         let ctx = prepared.ctx;
-        let upstreams = catalog_from_registry(registry);
+        let upstreams = &registry.upstreams;
         let available = available_pods(registry, self.route_policy.require_healthy);
-        let loads = LoadState::new(registry.total_pods());
-        let sticky = StickyStore::new();
 
         let plan = match ctx.mode {
             CalinixMode::Single => build_single_plan(
                 registry,
-                &upstreams,
+                upstreams,
                 &self.route_policy,
-                &loads,
-                &sticky,
+                loads,
+                sticky,
                 &self.score_stage,
                 available,
                 &ctx,
             )?,
             CalinixMode::Disaggregated => build_disaggregated_plan(
                 registry,
-                &upstreams,
+                upstreams,
                 &self.route_policy,
-                &loads,
-                &sticky,
+                loads,
+                sticky,
                 &self.score_stage,
                 available,
                 &ctx,
@@ -117,6 +119,8 @@ impl RoutingPipeline {
         Ok(RoutedRequest {
             plan,
             forwarding_headers,
+            session_key: ctx.openai.session_key,
+            cumulative_hashes: ctx.cumulative_hashes,
         })
     }
 }
@@ -126,7 +130,7 @@ fn build_single_plan(
     upstreams: &UpstreamCatalog,
     route_policy: &RoutePolicy,
     loads: &LoadState,
-    sticky: &StickyStore,
+    _sticky: &StickyStore,
     score: &ScoreStage,
     alive: HostBitmap,
     ctx: &RoutingContext,
@@ -134,28 +138,14 @@ fn build_single_plan(
     let filter = FilterStage;
     let candidates =
         filter.candidates_for_role(upstreams, RequiredRole::Single, route_policy, alive);
-    let cache_depths = registry
-        .cache_registry
-        .longest_prefix_lengths(&ctx.cumulative_hashes, candidates.clone());
-    let scores = score.score_candidates(
-        ctx,
-        RequiredRole::Single,
-        candidates,
-        &cache_depths,
-        upstreams,
-        loads,
-        sticky,
-        None,
-    );
-    let pod_id = PickStage.pick_one(&scores)?;
+    let picked = score
+        .pick_best_cache_candidate(ctx, candidates, &registry.cache_registry, upstreams, loads)
+        .ok_or(RoutingError::NoCandidates)?;
+    let pod_id = picked.pod_id;
     let pod = upstreams
         .pod(pod_id)
         .ok_or(RoutingError::MissingPod(pod_id))?;
-    let cache_prefix_depth = scores
-        .iter()
-        .find(|score| score.pod_id == pod_id)
-        .map(|score| score.cache_prefix_depth)
-        .unwrap_or(0);
+    let cache_prefix_depth = picked.cache_prefix_depth;
 
     Ok(RoutingPlan::Single {
         request_id: ctx.request_id.clone(),
@@ -172,7 +162,7 @@ fn build_disaggregated_plan(
     upstreams: &UpstreamCatalog,
     route_policy: &RoutePolicy,
     loads: &LoadState,
-    sticky: &StickyStore,
+    _sticky: &StickyStore,
     score: &ScoreStage,
     alive: HostBitmap,
     ctx: &RoutingContext,
@@ -184,42 +174,26 @@ fn build_disaggregated_plan(
         route_policy,
         alive.clone(),
     );
-    let prefill_cache_depths = registry
-        .cache_registry
-        .longest_prefix_lengths(&ctx.cumulative_hashes, prefill_candidates.clone());
-    let prefill_scores = score.score_candidates(
-        ctx,
-        RequiredRole::Prefill,
-        prefill_candidates,
-        &prefill_cache_depths,
-        upstreams,
-        loads,
-        sticky,
-        None,
-    );
-    let prefill_pod_id = PickStage.pick_one(&prefill_scores)?;
+    let picked_prefill = score
+        .pick_best_cache_candidate(
+            ctx,
+            prefill_candidates,
+            &registry.cache_registry,
+            upstreams,
+            loads,
+        )
+        .ok_or(RoutingError::NoCandidates)?;
+    let prefill_pod_id = picked_prefill.pod_id;
     let prefill_pod = upstreams
         .pod(prefill_pod_id)
         .ok_or(RoutingError::MissingPod(prefill_pod_id))?;
-    let cache_prefix_depth = prefill_scores
-        .iter()
-        .find(|score| score.pod_id == prefill_pod_id)
-        .map(|score| score.cache_prefix_depth)
-        .unwrap_or(0);
+    let cache_prefix_depth = picked_prefill.cache_prefix_depth;
 
     let decode_candidates =
         filter.candidates_for_role(upstreams, RequiredRole::Decode, route_policy, alive);
-    let decode_scores = score.score_candidates(
-        ctx,
-        RequiredRole::Decode,
-        decode_candidates,
-        &[],
-        upstreams,
-        loads,
-        sticky,
-        Some(prefill_pod_id),
-    );
-    let decode_pod_id = PickStage.pick_one(&decode_scores)?;
+    let decode_pod_id = score
+        .pick_first_available(decode_candidates, upstreams, loads)
+        .ok_or(RoutingError::NoCandidates)?;
 
     Ok(RoutingPlan::Disaggregated {
         request_id: ctx.request_id.clone(),
@@ -230,42 +204,6 @@ fn build_disaggregated_plan(
         cache_prefix_depth,
         route_policy: route_policy.name.clone(),
     })
-}
-
-fn catalog_from_registry(registry: &RuntimeRegistry) -> UpstreamCatalog {
-    UpstreamCatalog {
-        pods: registry.pod_table.pods.clone(),
-        groups: vec![
-            UpstreamGroup {
-                id: 1,
-                name: "single".to_string(),
-                role: PodRole::Single,
-                pods: pod_ids_from_bitmap(&registry.single_pods),
-            },
-            UpstreamGroup {
-                id: 2,
-                name: "prefill".to_string(),
-                role: PodRole::Prefill,
-                pods: pod_ids_from_bitmap(&registry.prefill_pods),
-            },
-            UpstreamGroup {
-                id: 3,
-                name: "decode".to_string(),
-                role: PodRole::Decode,
-                pods: pod_ids_from_bitmap(&registry.decode_pods),
-            },
-        ],
-    }
-}
-
-fn pod_ids_from_bitmap(bitmap: &HostBitmap) -> Vec<u16> {
-    let mut pod_ids = Vec::new();
-    bitmap.for_each_set_bit(|pod_id| {
-        if let Ok(pod_id) = u16::try_from(pod_id) {
-            pod_ids.push(pod_id);
-        }
-    });
-    pod_ids
 }
 
 fn available_pods(registry: &RuntimeRegistry, require_healthy: bool) -> HostBitmap {

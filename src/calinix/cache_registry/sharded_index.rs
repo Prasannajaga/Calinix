@@ -5,6 +5,7 @@ use std::sync::RwLock;
 use super::block_hash::BlockHash;
 use super::fibonacci::{shard_for_with_count, DEFAULT_SHARD_COUNT};
 use super::host_bitmap::HostBitmap;
+use tracing::debug;
 
 #[derive(Debug)]
 pub struct ShardedBlockIndexer {
@@ -50,27 +51,39 @@ impl ShardedBlockIndexer {
         self.shards.len()
     }
 
-    pub fn register(&self, pod_id: usize, cumulative_hash: BlockHash) {
-        println!("registering pod {pod_id} for hash {cumulative_hash}");
+    pub fn register(&self, pod_id: usize, cumulative_hash: BlockHash) -> bool {
         self.observe_pod(pod_id);
 
         let shard = self.shard_for(cumulative_hash);
 
         let mut guard = self.shards[shard].write().expect("index shard poisoned");
-        guard
+        let owners = guard
             .entry(cumulative_hash)
-            .or_insert_with(HostBitmap::empty)
-            .set(pod_id);
+            .or_insert_with(HostBitmap::empty);
+        if owners.contains(pod_id) {
+            debug!(
+                pod_id,
+                cumulative_hash, shard, "cache block register skipped; already owned by pod"
+            );
+            return false;
+        }
+
+        owners.set(pod_id);
+        debug!(pod_id, cumulative_hash, shard, "cache block registered");
+        true
     }
 
-    pub fn register_chain(&self, pod_id: usize, cumulative_hashes: &[BlockHash]) {
+    pub fn register_chain(&self, pod_id: usize, cumulative_hashes: &[BlockHash]) -> usize {
+        let mut registered = 0;
         for hash in cumulative_hashes {
-            self.register(pod_id, *hash);
+            if self.register(pod_id, *hash) {
+                registered += 1;
+            }
         }
+        registered
     }
 
     pub fn evict(&self, pod_id: usize, cumulative_hash: BlockHash) {
-        println!("evicting pod {pod_id} for hash {cumulative_hash}");
         let shard = self.shard_for(cumulative_hash);
         let mut guard = self.shards[shard].write().expect("index shard poisoned");
         if let Some(owners) = guard.get_mut(&cumulative_hash) {
@@ -79,6 +92,7 @@ impl ShardedBlockIndexer {
                 guard.remove(&cumulative_hash);
             }
         }
+        debug!(pod_id, cumulative_hash, shard, "cache block evicted");
     }
 
     pub fn evict_chain(&self, pod_id: usize, cumulative_hashes: &[BlockHash]) {
@@ -96,11 +110,11 @@ impl ShardedBlockIndexer {
     }
 
     pub fn shutdown(&self, pod_id: usize) {
-        println!("shutting down pod {pod_id}");
         self.alive
             .write()
             .expect("alive bitmap poisoned")
             .clear(pod_id);
+        debug!(pod_id, "cache pod marked shutdown");
     }
 
     pub fn owners(&self, cumulative_hash: BlockHash) -> HostBitmap {
@@ -149,6 +163,20 @@ impl ShardedBlockIndexer {
             .collect()
     }
 
+    pub fn block_owners(&self) -> Vec<(BlockHash, HostBitmap)> {
+        let mut block_owners = Vec::new();
+        for shard in &self.shards {
+            let guard = shard.read().expect("index shard poisoned");
+            block_owners.extend(
+                guard
+                    .iter()
+                    .map(|(block_hash, owners)| (*block_hash, owners.clone())),
+            );
+        }
+        block_owners.sort_by_key(|(block_hash, _)| *block_hash);
+        block_owners
+    }
+
     pub fn total_entries(&self) -> usize {
         self.shard_entry_counts().iter().sum()
     }
@@ -183,6 +211,8 @@ impl ShardedBlockIndexer {
 #[cfg(test)]
 mod tests {
     use super::ShardedBlockIndexer;
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn shutdown_masks_pods_without_cleanup() {
@@ -193,5 +223,83 @@ mod tests {
         assert_eq!(indexer.owners_alive(42).iter_set_bits(), vec![0, 1]);
         indexer.shutdown(0);
         assert_eq!(indexer.owners_alive(42).iter_set_bits(), vec![1]);
+    }
+
+    #[test]
+    fn block_owners_snapshot_is_sorted() {
+        let indexer = ShardedBlockIndexer::new(2);
+        indexer.register(1, 99);
+        indexer.register(0, 42);
+        indexer.register(1, 42);
+
+        let block_owners = indexer.block_owners();
+
+        assert_eq!(block_owners.len(), 2);
+        assert_eq!(block_owners[0].0, 42);
+        assert_eq!(block_owners[0].1.iter_set_bits(), vec![0, 1]);
+        assert_eq!(block_owners[1].0, 99);
+        assert_eq!(block_owners[1].1.iter_set_bits(), vec![1]);
+    }
+
+    #[test]
+    fn duplicate_register_is_noop_for_same_pod_and_hash() {
+        let indexer = ShardedBlockIndexer::new(2);
+
+        assert!(indexer.register(0, 42));
+        assert!(!indexer.register(0, 42));
+
+        let owners = indexer.owners(42);
+        assert_eq!(owners.iter_set_bits(), vec![0]);
+        assert_eq!(indexer.total_entries(), 1);
+    }
+
+    #[test]
+    fn parallel_register_evict_and_shutdown_remain_consistent() {
+        const PODS: usize = 128;
+        const SHARDS: usize = 32;
+        const HASHES_PER_POD: usize = 8;
+
+        let indexer = Arc::new(ShardedBlockIndexer::with_shards(PODS, SHARDS));
+        let mut handles = Vec::new();
+
+        for pod_id in 0..PODS {
+            let indexer = Arc::clone(&indexer);
+            handles.push(thread::spawn(move || {
+                for offset in 0..HASHES_PER_POD {
+                    indexer.register(pod_id, (offset as u64) + 10_000);
+                }
+                if pod_id % 2 == 0 {
+                    indexer.shutdown(pod_id);
+                }
+                for offset in 0..HASHES_PER_POD {
+                    if pod_id % 3 == 0 {
+                        indexer.evict(pod_id, (offset as u64) + 10_000);
+                    }
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("worker did not panic");
+        }
+
+        for offset in 0..HASHES_PER_POD {
+            let owners = indexer.owners((offset as u64) + 10_000);
+            for pod_id in (0..PODS).filter(|pod_id| pod_id % 3 != 0) {
+                assert!(
+                    owners.contains(pod_id),
+                    "pod {pod_id} should still own hash"
+                );
+            }
+
+            let owners_alive = indexer.owners_alive((offset as u64) + 10_000);
+            for pod_id in 0..PODS {
+                assert_eq!(
+                    owners_alive.contains(pod_id),
+                    pod_id % 2 != 0 && pod_id % 3 != 0,
+                    "unexpected live ownership for pod {pod_id}"
+                );
+            }
+        }
     }
 }

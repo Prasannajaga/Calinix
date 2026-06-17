@@ -1,4 +1,4 @@
-use crate::cache_registry::HostBitmap;
+use crate::cache_registry::{CacheRegistry, HostBitmap};
 use crate::routing::context::RoutingContext;
 use crate::routing::filter::RequiredRole;
 use crate::session::StickyStore;
@@ -13,6 +13,12 @@ pub struct CandidateScore {
     pub sticky_score: f64,
     pub locality_score: f64,
     pub final_score: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PickedCandidate {
+    pub pod_id: PodId,
+    pub cache_prefix_depth: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,6 +37,38 @@ pub struct ScoreStage {
 }
 
 impl ScoreStage {
+    pub fn pick_best_cache_candidate(
+        &self,
+        ctx: &RoutingContext,
+        candidates: HostBitmap,
+        cache_registry: &CacheRegistry,
+        upstreams: &UpstreamCatalog,
+        loads: &LoadState,
+    ) -> Option<PickedCandidate> {
+        let candidates = acceptable_candidates(candidates, upstreams, loads);
+        cache_registry
+            .best_prefix_match(&ctx.cumulative_hashes, candidates)
+            .and_then(|prefix_match| {
+                let pod_id = PodId::try_from(prefix_match.pod_id).ok()?;
+                Some(PickedCandidate {
+                    pod_id,
+                    cache_prefix_depth: prefix_match.prefix_depth,
+                })
+            })
+    }
+
+    pub fn pick_first_available(
+        &self,
+        candidates: HostBitmap,
+        upstreams: &UpstreamCatalog,
+        loads: &LoadState,
+    ) -> Option<PodId> {
+        let candidates = acceptable_candidates(candidates, upstreams, loads);
+        candidates
+            .first_set_bit()
+            .and_then(|pod_id| PodId::try_from(pod_id).ok())
+    }
+
     pub fn score_candidates(
         &self,
         ctx: &RoutingContext,
@@ -102,6 +140,26 @@ impl ScoreStage {
             RequiredRole::Decode => self.decode_weights,
         }
     }
+}
+
+fn acceptable_candidates(
+    candidates: HostBitmap,
+    upstreams: &UpstreamCatalog,
+    loads: &LoadState,
+) -> HostBitmap {
+    let mut acceptable = HostBitmap::empty();
+    candidates.for_each_set_bit(|pod_id| {
+        let Ok(pod_id) = PodId::try_from(pod_id) else {
+            return;
+        };
+        let Some(pod) = upstreams.pod(pod_id) else {
+            return;
+        };
+        if loads.can_accept(pod) {
+            acceptable.set(pod_id as usize);
+        }
+    });
+    acceptable
 }
 
 fn locality_score(role: RequiredRole, prefill: Option<PodId>) -> f64 {

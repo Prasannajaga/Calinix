@@ -27,7 +27,9 @@ pub fn apply_event(indexer: &ShardedBlockIndexer, event: CacheEvent) {
         CacheEvent::PrefixCached {
             pod_id,
             cumulative_hash,
-        } => indexer.register(pod_id, cumulative_hash),
+        } => {
+            indexer.register(pod_id, cumulative_hash);
+        }
         CacheEvent::PrefixEvicted {
             pod_id,
             cumulative_hash,

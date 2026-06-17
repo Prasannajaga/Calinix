@@ -24,6 +24,7 @@ health:
 cacheRegistry:
   enabled: true
   maxPods: 256
+  shardsCount: 64
   staleTtlMs: 30000
 
 upstreams:
@@ -99,7 +100,7 @@ fn sharded_index_is_initialized_for_assigned_pods() {
     );
 
     assert_eq!(index.pod_count(), registry.total_pods());
-    assert_eq!(index.shard_count(), DEFAULT_SHARD_COUNT);
+    assert_eq!(index.shard_count(), 64);
     assert_eq!(registry.cache_registry.alive().count(), 0);
     assert_eq!(registry.pod_table.by_external_id.get("single-1"), Some(&0));
     assert_eq!(registry.pod_table.by_external_id.get("decode-2"), Some(&5));

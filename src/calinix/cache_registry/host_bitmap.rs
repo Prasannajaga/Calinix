@@ -81,6 +81,15 @@ impl HostBitmap {
         self.count_ones()
     }
 
+    pub fn first_set_bit(&self) -> Option<usize> {
+        for (word_index, word) in self.words.iter().enumerate() {
+            if *word != 0 {
+                return Some(word_index * BITS_PER_WORD + word.trailing_zeros() as usize);
+            }
+        }
+        None
+    }
+
     pub fn and(&self, other: &Self) -> Self {
         let mut words = vec![0; self.words.len().min(other.words.len())];
         for (index, word) in words.iter_mut().enumerate() {

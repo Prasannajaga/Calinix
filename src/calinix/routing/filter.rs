@@ -44,23 +44,7 @@ impl FilterStage {
             return HostBitmap::empty();
         }
 
-        let mut group_members = HostBitmap::empty();
-        for pod_id in &group.pods {
-            group_members.set(*pod_id as usize);
-        }
-
-        let mut filtered = HostBitmap::empty();
-        group_members.and(&alive).for_each_set_bit(|pod_id| {
-            let Ok(pod_id) = u16::try_from(pod_id) else {
-                return;
-            };
-            if upstreams.pod(pod_id).is_none() {
-                return;
-            };
-            filtered.set(pod_id as usize);
-        });
-
-        filtered
+        group.pod_bitmap.and(&alive)
     }
 }
 

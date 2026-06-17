@@ -1,3 +1,4 @@
+use crate::cache_registry::HostBitmap;
 use crate::upstream::pod::{PodEndpoint, PodId, UpstreamId};
 use crate::upstream::roles::PodRole;
 
@@ -7,6 +8,7 @@ pub struct UpstreamGroup {
     pub name: String,
     pub role: PodRole,
     pub pods: Vec<PodId>,
+    pub pod_bitmap: HostBitmap,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -21,7 +23,9 @@ impl UpstreamCatalog {
     }
 
     pub fn pod(&self, pod_id: PodId) -> Option<&PodEndpoint> {
-        self.pods.iter().find(|pod| pod.id == pod_id)
+        self.pods
+            .get(pod_id as usize)
+            .filter(|pod| pod.id == pod_id)
     }
 
     pub fn pods_in_group(&self, group_id: UpstreamId) -> Vec<&PodEndpoint> {

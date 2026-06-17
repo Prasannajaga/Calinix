@@ -17,6 +17,10 @@ pub fn validate_config(config: &CalinixConfig) -> Result<(), String> {
         return Err("cacheRegistry.maxPods must be non-zero".to_string());
     }
 
+    if config.cache_registry.shards_count == 0 {
+        return Err("cacheRegistry.shardsCount must be non-zero".to_string());
+    }
+
     if config.health.endpoint.trim().is_empty() {
         return Err("health.endpoint must be non-empty".to_string());
     }

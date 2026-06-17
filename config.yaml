@@ -14,6 +14,7 @@ health:
 cacheRegistry:
   enabled: true
   maxPods: 256
+  shardsCount: 256
   staleTtlMs: 30000
 
 upstreams:

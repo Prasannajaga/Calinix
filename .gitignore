@@ -4,3 +4,5 @@ teds.txt
 bench.md
 FLOW.md
 e2e/
+benchmark/
+*.pyc

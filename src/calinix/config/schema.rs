@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use crate::cache_registry::DEFAULT_SHARD_COUNT;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalinixConfig {
@@ -38,7 +40,13 @@ pub struct HealthConfig {
 pub struct CacheRegistryConfig {
     pub enabled: bool,
     pub max_pods: usize,
+    #[serde(default = "default_shards_count")]
+    pub shards_count: usize,
     pub stale_ttl_ms: u64,
+}
+
+fn default_shards_count() -> usize {
+    DEFAULT_SHARD_COUNT
 }
 
 #[derive(Clone, Debug, Deserialize)]

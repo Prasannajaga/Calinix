@@ -9,6 +9,7 @@ const SESSION_KEY_HEADER: &str = "x-calinix-session-key";
 pub enum OpenAiRequestKind {
     ChatCompletions,
     Completions,
+    Embeddings,
     Unknown,
 }
 
@@ -46,6 +47,16 @@ pub fn extract_openai_routing_view(
     body: &[u8],
 ) -> Result<OpenAiRoutingView, OpenAiParseError> {
     let kind = request_kind(path);
+    if kind == OpenAiRequestKind::Unknown {
+        return Ok(OpenAiRoutingView {
+            kind,
+            model: None,
+            prompt_text: String::new(),
+            session_key: session_key_header(headers),
+            stream: false,
+        });
+    }
+
     let value = parse_body(body)?;
     let model = value
         .get("model")
@@ -60,6 +71,7 @@ pub fn extract_openai_routing_view(
     let prompt_text = match kind {
         OpenAiRequestKind::ChatCompletions => extract_chat_prompt(&value)?,
         OpenAiRequestKind::Completions => extract_completion_prompt(&value)?,
+        OpenAiRequestKind::Embeddings => extract_embedding_input(&value)?,
         OpenAiRequestKind::Unknown => String::new(),
     };
 
@@ -77,6 +89,7 @@ fn request_kind(path: &str) -> OpenAiRequestKind {
     match path {
         "/v1/chat/completions" => OpenAiRequestKind::ChatCompletions,
         "/v1/completions" => OpenAiRequestKind::Completions,
+        "/v1/embeddings" => OpenAiRequestKind::Embeddings,
         _ => OpenAiRequestKind::Unknown,
     }
 }
@@ -140,19 +153,47 @@ fn extract_completion_prompt(value: &Value) -> Result<String, OpenAiParseError> 
     }
 }
 
+fn extract_embedding_input(value: &Value) -> Result<String, OpenAiParseError> {
+    let input = value
+        .get("input")
+        .ok_or(OpenAiParseError::InvalidShape("embeddings require input"))?;
+
+    match input {
+        Value::String(text) => Ok(text.clone()),
+        Value::Array(items) => {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(text) = item.as_str() else {
+                    return Err(OpenAiParseError::InvalidShape(
+                        "embedding input arrays must contain only strings",
+                    ));
+                };
+                parts.push(text);
+            }
+            Ok(parts.join("\n"))
+        }
+        _ => Err(OpenAiParseError::InvalidShape(
+            "embedding input must be a string or string array",
+        )),
+    }
+}
+
 fn session_key(headers: &HeaderMap, value: &Value) -> Option<String> {
+    session_key_header(headers).or_else(|| {
+        value
+            .get("user")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn session_key_header(headers: &HeaderMap) -> Option<String> {
     headers
         .get(SESSION_KEY_HEADER)
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| {
-            value
-                .get("user")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
 }
 
 #[cfg(test)]
@@ -182,5 +223,25 @@ mod tests {
 
         assert_eq!(view.kind, OpenAiRequestKind::Completions);
         assert_eq!(view.prompt_text, "one\ntwo");
+    }
+
+    #[test]
+    fn extracts_embedding_input_array() {
+        let body = br#"{"model":"embedding-test","input":["alpha","beta"]}"#;
+
+        let view = extract_openai_routing_view("/v1/embeddings", &HeaderMap::new(), body).unwrap();
+
+        assert_eq!(view.kind, OpenAiRequestKind::Embeddings);
+        assert_eq!(view.prompt_text, "alpha\nbeta");
+    }
+
+    #[test]
+    fn unknown_paths_do_not_require_json_body() {
+        let body = b"raw body can still be proxied";
+
+        let view = extract_openai_routing_view("/any/path", &HeaderMap::new(), body).unwrap();
+
+        assert_eq!(view.kind, OpenAiRequestKind::Unknown);
+        assert_eq!(view.prompt_text, "");
     }
 }

@@ -1,4 +1,4 @@
-pub const DEFAULT_BLOCK_SIZE: usize = 4;
+pub const DEFAULT_BLOCK_SIZE: usize = 32;
 
 const FNV_OFFSET: u64 = 14_695_981_039_346_656_037;
 const FNV_PRIME: u64 = 1_099_511_628_211;

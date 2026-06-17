@@ -27,8 +27,9 @@ pub use fibonacci::{
 };
 pub use host_bitmap::{HostBitmap, PodId};
 pub use prefix_query::{
-    longest_prefix_lengths_debug, longest_prefix_lengths_for_candidates,
-    longest_prefix_lengths_into, PrefixMatchDebug, SearchFrame,
+    best_prefix_match_for_candidates, longest_prefix_lengths_debug,
+    longest_prefix_lengths_for_candidates, longest_prefix_lengths_into, PrefixMatch,
+    PrefixMatchDebug, SearchFrame,
 };
 pub use sharded_index::ShardedBlockIndexer;
 pub use snapshot::CacheRegistrySnapshot;
@@ -71,12 +72,12 @@ impl CacheRegistry {
         &self.block_index
     }
 
-    pub fn register_prefix(&self, pod_id: usize, cumulative_hash: BlockHash) {
-        self.block_index.register(pod_id, cumulative_hash);
+    pub fn register_prefix(&self, pod_id: usize, cumulative_hash: BlockHash) -> bool {
+        self.block_index.register(pod_id, cumulative_hash)
     }
 
-    pub fn register_chain(&self, pod_id: usize, cumulative_hashes: &[BlockHash]) {
-        self.block_index.register_chain(pod_id, cumulative_hashes);
+    pub fn register_chain(&self, pod_id: usize, cumulative_hashes: &[BlockHash]) -> usize {
+        self.block_index.register_chain(pod_id, cumulative_hashes)
     }
 
     pub fn evict_prefix(&self, pod_id: usize, cumulative_hash: BlockHash) {
@@ -103,6 +104,10 @@ impl CacheRegistry {
         self.block_index.owners_alive(cumulative_hash)
     }
 
+    pub fn block_owners(&self) -> Vec<(BlockHash, HostBitmap)> {
+        self.block_index.block_owners()
+    }
+
     pub fn alive(&self) -> HostBitmap {
         self.block_index.alive()
     }
@@ -113,6 +118,14 @@ impl CacheRegistry {
         candidate_pods: HostBitmap,
     ) -> Vec<usize> {
         longest_prefix_lengths_for_candidates(&self.block_index, cumulative_hashes, candidate_pods)
+    }
+
+    pub fn best_prefix_match(
+        &self,
+        cumulative_hashes: &[BlockHash],
+        candidate_pods: HostBitmap,
+    ) -> Option<PrefixMatch> {
+        best_prefix_match_for_candidates(&self.block_index, cumulative_hashes, candidate_pods)
     }
 
     pub fn cleanup_dead_pod(&self, pod_id: usize) -> CleanupReport {
