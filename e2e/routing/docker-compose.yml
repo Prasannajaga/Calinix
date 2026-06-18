@@ -1,5 +1,10 @@
-# Force-build only the Calinix service:
-# docker compose -f docker-compose.yml build --no-cache calinix
+x-mock-pod-base: &mock-pod-base
+  build:
+    context: .
+    dockerfile: Dockerfile.mock
+  working_dir: /app
+  volumes:
+    - ./mock_pod.py:/app/mock_pod.py:ro
 
 services:
   calinix:
@@ -11,86 +16,153 @@ services:
       - "18080:8080"
     volumes:
       - ./config.yaml:/etc/calinix/config.yaml:ro
-    # depends_on:
-    #   single-1:
-    #     condition: service_healthy
-    #   single-2:
-    #     condition: service_healthy
-    #   prefill-1:
-    #     condition: service_healthy
-    #   prefill-2:
-    #     condition: service_healthy
-    #   decode-1:
-    #     condition: service_healthy
-    #   decode-2:
-    #     condition: service_healthy
 
-  single-1: &mock-pod
-    build:
-      context: .
-      dockerfile: Dockerfile.mock
-    working_dir: /app
-    ports:
-      - "18101:8000"
-    volumes:
-      - ./mock_pod.py:/app/mock_pod.py:ro
-    # healthcheck:
-    #   test:
-    #     [
-    #       "CMD",
-    #       "python",
-    #       "-c",
-    #       "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
-    #     ]
-    #   interval: 20s
-    #   timeout: 10s
-    #   retries: 30
+  single-1:
+    <<: *mock-pod-base
+    expose:
+      - "8101"
     environment:
       CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: single-1
-      PORT: "8000"
+      POD_ID: "0"
+      PORT: "8101"
 
   single-2:
-    <<: *mock-pod
-    ports:
-      - "18102:8000"
+    <<: *mock-pod-base
+    expose:
+      - "8102"
     environment:
       CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: single-2
-      PORT: "8000"
+      POD_ID: "1"
+      PORT: "8102"
+
+  single-3:
+    <<: *mock-pod-base
+    expose:
+      - "8103"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: single-3
+      POD_ID: "2"
+      PORT: "8103"
+
+  single-4:
+    <<: *mock-pod-base
+    expose:
+      - "8104"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: single-4
+      POD_ID: "3"
+      PORT: "8104"
+
+  single-5:
+    <<: *mock-pod-base
+    expose:
+      - "8105"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: single-5
+      POD_ID: "4"
+      PORT: "8105"
 
   prefill-1:
-    <<: *mock-pod
-    ports:
-      - "18201:8000"
+    <<: *mock-pod-base
+    expose:
+      - "8201"
     environment:
       CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: prefill-1
-      PORT: "8000"
+      POD_ID: "5"
+      PORT: "8201"
 
   prefill-2:
-    <<: *mock-pod
-    ports:
-      - "18202:8000"
+    <<: *mock-pod-base
+    expose:
+      - "8202"
     environment:
       CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: prefill-2
-      PORT: "8000"
+      POD_ID: "6"
+      PORT: "8202"
+
+  prefill-3:
+    <<: *mock-pod-base
+    expose:
+      - "8203"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: prefill-3
+      POD_ID: "7"
+      PORT: "8203"
+
+  prefill-4:
+    <<: *mock-pod-base
+    expose:
+      - "8204"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: prefill-4
+      POD_ID: "8"
+      PORT: "8204"
+
+  prefill-5:
+    <<: *mock-pod-base
+    expose:
+      - "8205"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: prefill-5
+      POD_ID: "9"
+      PORT: "8205"
 
   decode-1:
-    <<: *mock-pod
-    ports:
-      - "18301:8000"
+    <<: *mock-pod-base
+    expose:
+      - "8301"
     environment:
       CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: decode-1
-      PORT: "8000"
+      POD_ID: "10"
+      PORT: "8301"
 
   decode-2:
-    <<: *mock-pod
-    ports:
-      - "18302:8000"
+    <<: *mock-pod-base
+    expose:
+      - "8302"
     environment:
       CALINIX_EVENT_URL: http://calinix:8080/events
       SERVICE_NAME: decode-2
-      PORT: "8000"
+      POD_ID: "11"
+      PORT: "8302"
+
+  decode-3:
+    <<: *mock-pod-base
+    expose:
+      - "8303"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: decode-3
+      POD_ID: "12"
+      PORT: "8303"
+
+  decode-4:
+    <<: *mock-pod-base
+    expose:
+      - "8304"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: decode-4
+      POD_ID: "13"
+      PORT: "8304"
+
+  decode-5:
+    <<: *mock-pod-base
+    expose:
+      - "8305"
+    environment:
+      CALINIX_EVENT_URL: http://calinix:8080/events
+      SERVICE_NAME: decode-5
+      POD_ID: "14"
+      PORT: "8305"

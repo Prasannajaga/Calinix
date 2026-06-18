@@ -6,7 +6,7 @@ use crate::cache_registry::{CacheRegistry, HostBitmap};
 use crate::config::{CalinixConfig, PodConfig};
 
 use super::pool::{UpstreamCatalog, UpstreamGroup};
-use super::roles::PodRole;
+use super::roles::{PodCapabilities, PodRole};
 
 pub type PodId = u16;
 pub type UpstreamId = u16;
@@ -17,6 +17,10 @@ pub struct PodEndpoint {
     pub id: PodId,
     pub pod_id: PodId,
     pub address: String,
+    pub healthy: bool,
+    pub draining: bool,
+    pub max_conns: usize,
+    pub capabilities: PodCapabilities,
 }
 
 #[derive(Debug)]
@@ -49,18 +53,21 @@ impl RuntimeRegistry {
 
         push_pods(
             &config.upstreams.single.pods,
+            PodRole::Single,
             &mut pods,
             &mut by_external_id,
             &mut single_pods,
         )?;
         push_pods(
             &config.upstreams.dispatch.prefill.pods,
+            PodRole::Prefill,
             &mut pods,
             &mut by_external_id,
             &mut prefill_pods,
         )?;
         push_pods(
             &config.upstreams.dispatch.decode.pods,
+            PodRole::Decode,
             &mut pods,
             &mut by_external_id,
             &mut decode_pods,
@@ -135,6 +142,7 @@ fn pod_ids_from_bitmap(bitmap: &HostBitmap) -> Vec<PodId> {
 
 fn push_pods(
     configured: &[PodConfig],
+    role: PodRole,
     pods: &mut Vec<PodEndpoint>,
     by_external_id: &mut HashMap<String, PodId>,
     role_bitmap: &mut HostBitmap,
@@ -144,10 +152,22 @@ fn push_pods(
             .map_err(|_| "configured pod count exceeds u16 PodId capacity".to_string())?;
         by_external_id.insert(pod.id.clone(), pod_id);
         role_bitmap.set(pod_id as usize);
+        let capabilities = pod.capabilities.unwrap_or_else(|| role.into());
+        if !capabilities.supports(role) {
+            return Err(format!(
+                "pod '{}' capabilities must support its upstream role {:?}",
+                pod.id, role
+            ));
+        }
+
         pods.push(PodEndpoint {
             id: pod_id,
             pod_id,
             address: pod.url.clone(),
+            healthy: pod.healthy,
+            draining: pod.draining,
+            max_conns: pod.max_conns,
+            capabilities,
         });
     }
     Ok(())

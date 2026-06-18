@@ -1,18 +1,13 @@
 # Cache-Aware Routing Microbench
 
-this is not your traiditonal load balancer like nginx
-this is cache aware load balancer which supports
-prefill + decode disaggregated using two mods
+This is not a traditional load balancer like Nginx. It is a cache-aware load balancer that supports prefill and decode disaggregation using two modes:
 
-1. single
-2. disaggregated dispatch
+1. **Single** (unified routing)
+2. **Disaggregated dispatch** (separate prefill and decode routing)
 
-calinix tells which pods is suited for each request
-it owns the load balancer you own the your inference logic
-without any hassel.
+Calinix determines which pods are best suited for each request, handling the routing complexity so you can manage your inference logic hassle-free.
 
-## config 
-
+## config
 
 ```yaml
 version: 1
@@ -59,8 +54,6 @@ upstreams:
         - id: decode-2
           url: http://decode-2:8000
 ```
- 
-
 
 ## workflow
 
@@ -81,49 +74,34 @@ This benchmark follows Modular exactly:
 
 `HostBitmap` is exactly `[u64; 4]`, covering 256 pods. Intersecting cache owners with alive pods or role candidates is just four `u64` operations.
 
-So I reproduced the benchmark
+### Benchmark Results
 
-bitmap p99 = 1.042 µs
-list   p99 = 6.060 µs
-array  p99 = 3.521 µs
+Here are the reproduced benchmark results:
 
-So:
-list  is ~5.81x slower
-array is ~3.37x slower
+| Representation | p99 Latency | Relative Performance |
+| :--- | :---: | :---: |
+| **Bitmap (`[u64; 4]`)** | **1.042 µs** | **Baseline (1.0x)** |
+| **Array (`[bool; 256]`)** | 3.521 µs | ~3.37x slower |
+| **List (`Vec<usize>`)** | 6.060 µs | ~5.81x slower |
 
-heres why the clear goal is to represent pod Bitmap:
-[u64; 4] = 4 * 64 bits = 256 bits
-4 * u64 = 4 * 8 bytes = 32 bytes in memory
+### Memory Footprint
 
-List:
-Vec<usize>
-256 * 8 bytes = 2048 bytes in memory
+To represent pod cache ownership and health, each pod is mapped to a single bit. For 256 pods, here is how the memory footprints compare:
 
-Array:
-[bool; 256]
-256 * 1 byte = 256 bytes in memorycache ownership/ health.
-each pod is a single bit so for 256 pods is 256 bits
+| Representation | Type / Structure | Calculation | Memory Size |
+| :--- | :--- | :--- | :---: |
+| **Bitmap** | `[u64; 4]` | 4 × 64 bits | **32 bytes** |
+| **Array** | `[bool; 256]` | 256 × 1 byte | 256 bytes |
+| **List** | `Vec<usize>` | 256 × 8 bytes | 2048 bytes |
 
-Bitmap:
-[u64; 4] = 4 * 64 bits = 256 bits
-4 * u64 = 4 * 8 bytes = 32 bytes in memory
+With a bitmap, checking and intersecting pod sets becomes a few CPU bitwise operations. For 256 pods, it is just 4 × `u64` bitwise operations.
 
-List:
-Vec<usize>
-256 * 8 bytes = 2048 bytes in memory
-
-Array:
-[bool; 256]
-256 * 1 byte = 256 bytes in memory
-
-with bitmap, checking/intersecting pod sets becomes a few CPU bitwise operations so for 256 pods, it is just 4 x u64 bitwise operations.
-
-Each u64 operation works on 64 pod states at once, so the work stays constant but list and array operations grow linearly with the number of pods.
+Each `u64` operation processes 64 pod states simultaneously. The work stays constant, whereas list and array operations grow linearly with the number of pods.
 
 ## Why Cumulative Hashes
 
 The index stores cumulative prefix hashes, not random block hashes. Prefix `k` represents the full prompt prefix up to block `k`, so a match means the pod can reuse that whole prefix.
 
-## System design
+## P/D Disaggregation
 
 <img src="moderl-inference.svg" alt="Architecture diagram" width="1200">

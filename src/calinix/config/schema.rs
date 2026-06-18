@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use crate::cache_registry::DEFAULT_SHARD_COUNT;
+use crate::upstream::PodCapabilities;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +83,24 @@ pub struct PodGroupConfig {
 pub struct PodConfig {
     pub id: String,
     pub url: String,
+    #[serde(default = "default_pod_healthy")]
+    pub healthy: bool,
+    #[serde(default)]
+    pub draining: bool,
+    #[serde(default = "default_pod_max_conns")]
+    pub max_conns: usize,
+    #[serde(default)]
+    pub capabilities: Option<PodCapabilities>,
+}
+
+pub const DEFAULT_POD_MAX_CONNS: usize = 100;
+
+fn default_pod_healthy() -> bool {
+    true
+}
+
+fn default_pod_max_conns() -> usize {
+    DEFAULT_POD_MAX_CONNS
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]

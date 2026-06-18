@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -8,11 +8,14 @@ pub enum PodRole {
     Decode,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PodCapabilities {
+    #[serde(default)]
     pub single: bool,
+    #[serde(default)]
     pub prefill: bool,
+    #[serde(default)]
     pub decode: bool,
 }
 

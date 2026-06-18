@@ -22,11 +22,18 @@ impl LoadState {
     }
 
     pub fn can_accept(&self, pod: &PodEndpoint) -> bool {
-        self.inflight.get(pod.id as usize).is_some()
+        self.inflight
+            .get(pod.id as usize)
+            .is_some_and(|inflight| inflight.load(Ordering::Relaxed) < pod.max_conns)
     }
 
     pub fn score(&self, pod: &PodEndpoint) -> f64 {
-        100.0 / (self.inflight(pod.id) + 1) as f64
+        if pod.max_conns == 0 {
+            return 0.0;
+        }
+
+        let utilization = self.inflight(pod.id) as f64 / pod.max_conns as f64;
+        (100.0 * (1.0 - utilization)).clamp(0.0, 100.0)
     }
 
     pub fn track(&self, pod_id: PodId) -> Option<InflightGuard<'_>> {

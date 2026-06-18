@@ -90,6 +90,10 @@ pub fn validate_config(config: &CalinixConfig) -> Result<(), String> {
         if pod.url.trim().is_empty() {
             return Err(format!("pod '{}' must have a non-empty URL", pod.id));
         }
+
+        if pod.max_conns == 0 {
+            return Err(format!("pod '{}' maxConns must be non-zero", pod.id));
+        }
     }
 
     if total_pods > config.cache_registry.max_pods {

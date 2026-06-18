@@ -66,7 +66,7 @@ async def echo_openai_request(request: Request) -> dict[str, Any] | StreamingRes
 
     if body.get("stream") is True:
         return StreamingResponse(
-            stream_openai_chunks(request.url.path, body, headers, emitted_events),
+            stream_openai_chunks(request.url.path, body, headers, emitted_events, request),
             media_type="text/event-stream",
             headers={
                 "cache-control": "no-cache",
@@ -97,12 +97,13 @@ async def stream_openai_chunks(
     body: dict[str, Any],
     headers: dict[str, str],
     emitted_events: list[dict[str, Any]],
+    request: Request | None = None,
 ) -> AsyncIterator[str]:
     stream_id = f"mock-{SERVICE_NAME}-{int(time.time() * 1000)}"
     model = str(body.get("model", "mock-model"))
     created = int(time.time())
-    chunk_count = stream_token_count(body)
-    delay_seconds = max(0, STREAM_DELAY_MS) / 1000
+    chunk_count = stream_token_count(body, request)
+    delay_seconds = stream_delay_ms(request) / 1000
 
     yield sse_data(
         {
@@ -161,11 +162,36 @@ async def stream_openai_chunks(
     yield "data: [DONE]\n\n"
 
 
-def stream_token_count(body: dict[str, Any]) -> int:
+def stream_token_count(body: dict[str, Any], request: Request | None = None) -> int:
+    header_tokens = mock_header_int(request, "x-mock-stream-token-count")
+    if header_tokens is not None:
+        return max(1, header_tokens)
+
     max_tokens = body.get("max_tokens")
     if isinstance(max_tokens, int) and max_tokens > 0:
-        return min(max_tokens, STREAM_TOKEN_COUNT)
+        return max_tokens
     return STREAM_TOKEN_COUNT
+
+
+def stream_delay_ms(request: Request | None = None) -> int:
+    header_delay = mock_header_int(request, "x-mock-stream-delay-ms")
+    if header_delay is not None:
+        return max(0, header_delay)
+    return max(0, STREAM_DELAY_MS)
+
+
+def mock_header_int(request: Request | None, name: str) -> int | None:
+    if request is None:
+        return None
+
+    value = request.headers.get(name)
+    if value is None:
+        return None
+
+    try:
+        return int(value)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=f"{name} must be an integer") from err
 
 
 def random_token() -> str:

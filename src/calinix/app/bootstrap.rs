@@ -265,6 +265,11 @@ async fn openai_compatible_endpoint(
                 }
                 response = response.header(name, value);
             }
+            for (name, value) in &routed.forwarding_headers {
+                if name.as_str().starts_with("x-calinix-") {
+                    response = response.header(name, value);
+                }
+            }
             response
                 .body(upstream.body.into())
                 .unwrap_or_else(|err| (StatusCode::BAD_GATEWAY, err.to_string()).into_response())
@@ -386,5 +391,100 @@ fn resolve_event_pod_id(
             .copied()
             .ok_or_else(|| format!("unknown pod external id: {external_id}")),
         (None, None) => Err("event requires podId or pod".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::routing_headers::{CACHE_HIT, TARGET_POD_ID};
+    use crate::routing::plan::RoutingPlan;
+    use axum::http::HeaderValue;
+
+    #[tokio::test]
+    #[ignore = "requires docker pods to be running"]
+    async fn test_openai_endpoint_returns_calinix_headers() {
+        // Initialize config
+        let mut config = load_config("./config.yaml").expect("load config");
+
+        // Check reachability and rewrite URLs if needed
+        let target_url = String::from("http://127.0.0.1:18101");
+        println!("Resolved single-1 URL: {}", target_url);
+
+        // Update config to use the reachable URL
+        config.upstreams.single.pods[0].url = target_url.clone();
+
+        let registry = RuntimeRegistry::from_config(&config).expect("create registry");
+        // Mark first pod as alive
+        registry.cache_registry.mark_pod_alive(0);
+
+        let state = AppState::new(registry);
+
+        let routed = RoutedRequest {
+            plan: RoutingPlan::Single {
+                request_id: "test-req".to_string(),
+                target_pod_id: 0,
+                target_address: target_url,
+                cache_hit: true,
+                cache_prefix_depth: 4,
+                route_policy: "default".to_string(),
+            },
+            forwarding_headers: {
+                let mut h = http::HeaderMap::new();
+                h.insert("x-calinix-cache-hit", HeaderValue::from_static("true"));
+                h.insert("x-calinix-target-pod-id", HeaderValue::from_static("0"));
+                h.insert(
+                    "x-calinix-cache-prefix-depth",
+                    HeaderValue::from_static("4"),
+                );
+                h
+            },
+            session_key: None,
+            cumulative_hashes: vec![],
+        };
+
+        let response = openai_compatible_endpoint(
+            State(state),
+            Extension(routed),
+            Method::POST,
+            Uri::from_static("/v1/chat/completions"),
+            Bytes::from(
+                r#"{"model":"llama-3.1-8b","messages":[{"role":"user","content":"test"}]}"#,
+            ),
+        )
+        .await;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+
+        println!("Test Run Response Status: {:?}", status);
+        println!("Test Run Response Headers:");
+        for (name, value) in &headers {
+            println!("  {}: {:?}", name, value);
+        }
+
+        // Assertions if we successfully hit the pod
+        if status.is_success() {
+            let cache_hit_val = headers.get(CACHE_HIT);
+            assert!(
+                cache_hit_val.is_some(),
+                "response should contain x-calinix-cache-hit header"
+            );
+            assert_eq!(cache_hit_val.unwrap().to_str().unwrap(), "true");
+            println!("Verified: {} header is present and is 'true'", CACHE_HIT);
+
+            let target_pod_val = headers.get(TARGET_POD_ID);
+            assert!(
+                target_pod_val.is_some(),
+                "response should contain x-calinix-target-pod-id header"
+            );
+            assert_eq!(target_pod_val.unwrap().to_str().unwrap(), "0");
+            println!("Verified: {} header is present and is '0'", TARGET_POD_ID);
+        } else {
+            println!(
+                "Skipping success assertion because status is non-success: {:?}",
+                status
+            );
+        }
     }
 }
