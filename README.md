@@ -7,7 +7,21 @@ This is not a traditional load balancer like Nginx. It is a cache-aware load bal
 
 Calinix determines which pods are best suited for each request, handling the routing complexity so you can manage your inference logic hassle-free.
 
-## config
+## Configurations
+
+The CALinix loads this YAML configuration at startup. By default, it expects a file named `./config.yaml` in the active working directory.
+
+To use a custom configuration file, pass its path as the first command-line argument:
+
+```bash
+# Start Calinix with default ./config.yaml
+cargo run --release
+
+# Start Calinix with a specific configuration file
+cargo run --release -- /path/to/my-config.yaml
+```
+
+### Example
 
 ```yaml
 version: 1
@@ -55,20 +69,14 @@ upstreams:
           url: http://decode-2:8000
 ```
 
-## workflow
+## Workflow
 
-This benchmark follows Modular exactly:
+The benchmarking suite verifies the core components of the routing pipeline under concurrent loads:
 
-1. Storage: HostBitmap
-   blockHash -> HostBitmap, where HostBitmap is a fixed 256-bit bitmap.
-2. Concurrency: sharded index
-   256 shards, each holding HashMap<BlockHash, HostBitmap> behind its own lock.
-3. Fibonacci hashing
-   shard = top bits of hash * 0x9E3779B97F4A7C15.
-   Compared against low-bit sharding to show distribution quality.
-4. Prefix query with binary search
-   Given a cumulative hash chain, find each pod's longest cached prefix.
-   Binary query is compared against naive N x P scanning.
+- **1. Storage (`HostBitmap`)**: Maps each `BlockHash` to a fixed 256-bit bitmap (`HostBitmap`). Check and intersection operations run in $O(1)$ time.
+- **2. Concurrency (Sharded Index)**: Uses 256 independent index shards to minimize lock contention. Each shard manages its own `HashMap<BlockHash, HostBitmap>` protected by an `RwLock`.
+- **3. Fibonacci Sharding**: Distributes keys using Fibonacci hashing (multiplying the hash by the golden ratio constant `0x9E3779B97F4A7C15`). This is compared against naive low-bit sharding to show distribution quality.
+- **4. Longest Prefix Query**: Given a cumulative hash chain of token blocks, searches the registry to find the longest cached prefix matching any available pod. Uses a binary search algorithm, compared against a naive $N \times P$ linear scan.
 
 ## Why HostBitmap
 
@@ -92,15 +100,16 @@ Consider a prompt: `"Explain cache aware routing in simple words"` with a **bloc
 
 1. **Tokenization:** `["Explain", "cache", "aware", "routing", "in", "simple", "words"]`
 2. **Block Construction & Cumulative Hash Chain:**
-   * **Block 1:** `["Explain", "cache"]` $\rightarrow$ `hash_1 = hash("Explain" + "cache")`
-   * **Block 2:** `["aware", "routing"]` $\rightarrow$ `hash_2 = hash(hash_1 + "aware" + "routing")`
-   * **Block 3:** `["in", "simple"]` $\rightarrow$ `hash_3 = hash(hash_2 + "in" + "simple")`
-   * **Block 4:** `["words"]` $\rightarrow$ `hash_4 = hash(hash_3 + "words")`
+   - **Block 1:** `["Explain", "cache"]` $\rightarrow$ `hash_1 = hash("Explain" + "cache")`
+   - **Block 2:** `["aware", "routing"]` $\rightarrow$ `hash_2 = hash(hash_1 + "aware" + "routing")`
+   - **Block 3:** `["in", "simple"]` $\rightarrow$ `hash_3 = hash(hash_2 + "in" + "simple")`
+   - **Block 4:** `["words"]` $\rightarrow$ `hash_4 = hash(hash_3 + "words")`
 
 If a subsequent request arrives with a similar prompt prefix: `"Explain cache aware routing in deep details"`:
-* **Block 1:** `["Explain", "cache"]` $\rightarrow$ Matches `hash_1` (Prefix match: 2 tokens)
-* **Block 2:** `["aware", "routing"]` $\rightarrow$ Matches `hash_2` (Prefix match: 4 tokens)
-* **Block 3:** `["in", "deep"]` $\rightarrow$ `hash(hash_2 + "in" + "deep")` $\neq$ `hash_3` (Mismatch!)
+
+- **Block 1:** `["Explain", "cache"]` $\rightarrow$ Matches `hash_1` (Prefix match: 2 tokens)
+- **Block 2:** `["aware", "routing"]` $\rightarrow$ Matches `hash_2` (Prefix match: 4 tokens)
+- **Block 3:** `["in", "deep"]` $\rightarrow$ `hash(hash_2 + "in" + "deep")` $\neq$ `hash_3` (Mismatch!)
 
 Since the hashes are cumulative, a match at `hash_2` guarantees that the *entire prefix* of 4 tokens matches exactly. The load balancer can confidently route the request to a pod caching up to `hash_2`, avoiding redundant prefill computation for the first 4 tokens.
 
