@@ -11,7 +11,7 @@ use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 
 use crate::app::state::{AppState, RegistrySummary};
 use crate::cache_registry::BlockHash;
@@ -170,13 +170,31 @@ async fn log_request(req: Request<Body>, next: Next) -> Response {
     let status = response.status();
     let elapsed_ms = started.elapsed().as_millis();
 
-    info!(
-        %method,
-        %path,
-        status = status.as_u16(),
-        elapsed_ms,
-        "request completed"
-    );
+    if status.is_server_error() {
+        warn!(
+            %method,
+            %path,
+            status = status.as_u16(),
+            elapsed_ms,
+            "request failed"
+        );
+    } else if status.is_client_error() {
+        warn!(
+            %method,
+            %path,
+            status = status.as_u16(),
+            elapsed_ms,
+            "request rejected"
+        );
+    } else {
+        info!(
+            %method,
+            %path,
+            status = status.as_u16(),
+            elapsed_ms,
+            "request completed"
+        );
+    }
 
     response
 }
@@ -257,6 +275,19 @@ async fn openai_compatible_endpoint(
                 if let Some(session_key) = routed.session_key {
                     state.sticky.remember(session_key, upstream.pod_id);
                 }
+            } else {
+                warn!(
+                    request_id = %routed.plan.request_id(),
+                    mode = routed.plan.mode_label(),
+                    selected_pod_id = routed.plan.primary_pod_id(),
+                    upstream_pod_id = upstream.pod_id,
+                    upstream_status = upstream.status.as_u16(),
+                    target = %routed.plan.target_address(),
+                    path = %path,
+                    cache_hit = routed.plan.cache_hit(),
+                    cache_prefix_depth = routed.plan.cache_prefix_depth(),
+                    "upstream returned non-success response"
+                );
             }
             let mut response = Response::builder().status(upstream.status);
             for (name, value) in &upstream.headers {
@@ -270,11 +301,33 @@ async fn openai_compatible_endpoint(
                     response = response.header(name, value);
                 }
             }
-            response
-                .body(upstream.body.into())
-                .unwrap_or_else(|err| (StatusCode::BAD_GATEWAY, err.to_string()).into_response())
+            response.body(upstream.body.into()).unwrap_or_else(|err| {
+                warn!(
+                    request_id = %routed.plan.request_id(),
+                    mode = routed.plan.mode_label(),
+                    selected_pod_id = routed.plan.primary_pod_id(),
+                    target = %routed.plan.target_address(),
+                    path = %path,
+                    error = %err,
+                    "failed to build upstream response"
+                );
+                (StatusCode::BAD_GATEWAY, err.to_string()).into_response()
+            })
         }
-        Err(err) => (StatusCode::BAD_GATEWAY, err).into_response(),
+        Err(err) => {
+            warn!(
+                request_id = %routed.plan.request_id(),
+                mode = routed.plan.mode_label(),
+                selected_pod_id = routed.plan.primary_pod_id(),
+                target = %routed.plan.target_address(),
+                path = %path,
+                cache_hit = routed.plan.cache_hit(),
+                cache_prefix_depth = routed.plan.cache_prefix_depth(),
+                error = %err,
+                "upstream forwarding failed"
+            );
+            (StatusCode::BAD_GATEWAY, err).into_response()
+        }
     }
 }
 

@@ -13,7 +13,6 @@ use crate::routing::plan::RoutingPlan;
 use crate::upstream::{LoadState, PodId, RuntimeRegistry};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
-const DEFAULT_MAX_ATTEMPTS: usize = 1;
 
 type ProxyHttpClient = Client<HttpConnector, Full<Bytes>>;
 
@@ -21,7 +20,6 @@ type ProxyHttpClient = Client<HttpConnector, Full<Bytes>>;
 pub struct HttpForwarder {
     client: Arc<ProxyHttpClient>,
     timeout: Duration,
-    max_attempts: usize,
 }
 
 pub struct UpstreamResponse {
@@ -45,14 +43,17 @@ impl Default for HttpForwarder {
 
 impl HttpForwarder {
     pub fn new() -> Self {
-        Self::with_policy(DEFAULT_TIMEOUT, DEFAULT_MAX_ATTEMPTS)
+        Self::with_timeout(DEFAULT_TIMEOUT)
     }
 
-    pub fn with_policy(timeout: Duration, max_attempts: usize) -> Self {
+    pub fn with_policy(timeout: Duration, _max_attempts: usize) -> Self {
+        Self::with_timeout(timeout)
+    }
+
+    pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             client: Arc::new(Client::builder(TokioExecutor::new()).build_http()),
             timeout,
-            max_attempts: max_attempts.max(1),
         }
     }
 
@@ -60,64 +61,43 @@ impl HttpForwarder {
         &self,
         method: Method,
         plan: &RoutingPlan,
-        registry: &RuntimeRegistry,
+        _registry: &RuntimeRegistry,
         loads: &LoadState,
         path: &str,
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<UpstreamResponse, String> {
-        let targets = fallback_targets(plan, registry);
-        let mut errors = Vec::new();
+        let target = ForwardTarget {
+            pod_id: plan.primary_pod_id(),
+            address: plan.target_address().to_string(),
+        };
+        let attempt_result = tokio::time::timeout(
+            self.timeout,
+            self.forward_once(1, method, plan, &target, loads, path, headers, body),
+        )
+        .await;
 
-        for (attempt, target) in targets.iter().take(self.max_attempts).enumerate() {
-            let attempt_result = tokio::time::timeout(
-                self.timeout,
-                self.forward_once(
-                    attempt + 1,
-                    method.clone(),
-                    plan,
-                    target,
-                    loads,
-                    path,
-                    headers,
-                    body,
-                ),
-            )
-            .await;
-
-            match attempt_result {
-                Ok(Ok(upstream)) => {
-                    if is_retryable_status(upstream.status) {
-                        let err_msg = format!(
-                            "target {} returned status {}",
-                            target.address, upstream.status
-                        );
-                        tracing::warn!(
-                            %err_msg,
-                            "upstream returned retryable status, falling back"
-                        );
-                        errors.push(err_msg);
-                        continue;
-                    }
-
-                    return Ok(upstream);
+        match attempt_result {
+            Ok(Ok(upstream)) => {
+                if is_retryable_status(upstream.status) {
+                    tracing::warn!(
+                        status = %upstream.status,
+                        target = %target.address,
+                        "upstream returned retryable status"
+                    );
                 }
-                Ok(Err(err)) => {
-                    tracing::warn!(%err, "upstream communication error, falling back");
-                    errors.push(err);
-                }
-                Err(_) => {
-                    let err_msg = format!("upstream request to {} timed out", target.address);
-                    tracing::warn!(%err_msg, "upstream timed out, falling back");
-                    errors.push(err_msg);
-                }
+                Ok(upstream)
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(%err, "upstream communication error");
+                Err(err)
+            }
+            Err(_) => {
+                let err_msg = format!("upstream request to {} timed out", target.address);
+                tracing::warn!(%err_msg, "upstream timed out");
+                Err(err_msg)
             }
         }
-
-        Err(format!(
-            "all upstream targets failed. Errors: [{}]",
-            errors.join("; ")
-        ))
     }
 
     async fn forward_once(
@@ -176,45 +156,6 @@ impl HttpForwarder {
             body,
         })
     }
-}
-
-fn fallback_targets(plan: &RoutingPlan, registry: &RuntimeRegistry) -> Vec<ForwardTarget> {
-    let (primary_pod_id, role_bitmap) = match plan {
-        RoutingPlan::Single { target_pod_id, .. } => (*target_pod_id, &registry.single_pods),
-        RoutingPlan::Disaggregated { prefill_pod_id, .. } => {
-            (*prefill_pod_id, &registry.prefill_pods)
-        }
-    };
-
-    let mut targets = vec![ForwardTarget {
-        pod_id: primary_pod_id,
-        address: plan.target_address().to_string(),
-    }];
-    let alive = registry.cache_registry.alive();
-    let mut alive_fallbacks = Vec::new();
-    let mut other_fallbacks = Vec::new();
-
-    role_bitmap.for_each_set_bit(|id| {
-        if id == primary_pod_id as usize {
-            return;
-        }
-
-        if let Some(pod) = registry.pod_table.pods.get(id) {
-            let target = ForwardTarget {
-                pod_id: pod.id,
-                address: pod.address.clone(),
-            };
-            if alive.contains(id) {
-                alive_fallbacks.push(target);
-            } else {
-                other_fallbacks.push(target);
-            }
-        }
-    });
-
-    targets.extend(alive_fallbacks);
-    targets.extend(other_fallbacks);
-    targets
 }
 
 fn headers_for_attempt(

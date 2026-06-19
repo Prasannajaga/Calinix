@@ -24,6 +24,43 @@ pub enum RoutingPlan {
 }
 
 impl RoutingPlan {
+    pub fn request_id(&self) -> &str {
+        match self {
+            Self::Single { request_id, .. } | Self::Disaggregated { request_id, .. } => request_id,
+        }
+    }
+
+    pub fn mode_label(&self) -> &'static str {
+        match self {
+            Self::Single { .. } => "single",
+            Self::Disaggregated { .. } => "disaggregated",
+        }
+    }
+
+    pub fn primary_pod_id(&self) -> PodId {
+        match self {
+            Self::Single { target_pod_id, .. } => *target_pod_id,
+            Self::Disaggregated { prefill_pod_id, .. } => *prefill_pod_id,
+        }
+    }
+
+    pub fn cache_hit(&self) -> bool {
+        match self {
+            Self::Single { cache_hit, .. } | Self::Disaggregated { cache_hit, .. } => *cache_hit,
+        }
+    }
+
+    pub fn cache_prefix_depth(&self) -> usize {
+        match self {
+            Self::Single {
+                cache_prefix_depth, ..
+            }
+            | Self::Disaggregated {
+                cache_prefix_depth, ..
+            } => *cache_prefix_depth,
+        }
+    }
+
     pub fn routing_headers(&self) -> RoutingHeaderValues {
         match self {
             Self::Single {

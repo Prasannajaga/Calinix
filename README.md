@@ -72,35 +72,37 @@ This benchmark follows Modular exactly:
 
 ## Why HostBitmap
 
-`HostBitmap` is exactly `[u64; 4]`, covering 256 pods. Intersecting cache owners with alive pods or role candidates is just four `u64` operations.
+`HostBitmap` uses `[u64; 4]` to represent 256 pods. This allows check and intersection operations to execute as 4 CPU bitwise operations, keeping performance constant ($O(1)$) rather than growing linearly with the pod count.
 
-### Benchmark Results
+### Representation Comparison
 
-Here are the reproduced benchmark results:
-
-| Representation | p99 Latency | Relative Performance |
-| :--- | :---: | :---: |
-| **Bitmap (`[u64; 4]`)** | **1.042 µs** | **Baseline (1.0x)** |
-| **Array (`[bool; 256]`)** | 3.521 µs | ~3.37x slower |
-| **List (`Vec<usize>`)** | 6.060 µs | ~5.81x slower |
-
-### Memory Footprint
-
-To represent pod cache ownership and health, each pod is mapped to a single bit. For 256 pods, here is how the memory footprints compare:
-
-| Representation | Type / Structure | Calculation | Memory Size |
-| :--- | :--- | :--- | :---: |
-| **Bitmap** | `[u64; 4]` | 4 × 64 bits | **32 bytes** |
-| **Array** | `[bool; 256]` | 256 × 1 byte | 256 bytes |
-| **List** | `Vec<usize>` | 256 × 8 bytes | 2048 bytes |
-
-With a bitmap, checking and intersecting pod sets becomes a few CPU bitwise operations. For 256 pods, it is just 4 × `u64` bitwise operations.
-
-Each `u64` operation processes 64 pod states simultaneously. The work stays constant, whereas list and array operations grow linearly with the number of pods.
+| Representation | Type / Structure | Memory Size | p99 Latency | Relative Performance |
+| :--- | :--- | :---: | :---: | :---: |
+| **Bitmap (`HostBitmap`)** | `[u64; 4]` | **32 bytes** | **1.042 µs** | **Baseline (1.0x)** |
+| **Array** | `[bool; 256]` | 256 bytes | 3.521 µs | ~3.37x slower |
+| **List** | `Vec<usize>` | 2048 bytes | 6.060 µs | ~5.81x slower |
 
 ## Why Cumulative Hashes
 
 The index stores cumulative prefix hashes, not random block hashes. Prefix `k` represents the full prompt prefix up to block `k`, so a match means the pod can reuse that whole prefix.
+
+### Example of Cumulative Prefix Hashing
+
+Consider a prompt: `"Explain cache aware routing in simple words"` with a **block size of 2 tokens**:
+
+1. **Tokenization:** `["Explain", "cache", "aware", "routing", "in", "simple", "words"]`
+2. **Block Construction & Cumulative Hash Chain:**
+   * **Block 1:** `["Explain", "cache"]` $\rightarrow$ `hash_1 = hash("Explain" + "cache")`
+   * **Block 2:** `["aware", "routing"]` $\rightarrow$ `hash_2 = hash(hash_1 + "aware" + "routing")`
+   * **Block 3:** `["in", "simple"]` $\rightarrow$ `hash_3 = hash(hash_2 + "in" + "simple")`
+   * **Block 4:** `["words"]` $\rightarrow$ `hash_4 = hash(hash_3 + "words")`
+
+If a subsequent request arrives with a similar prompt prefix: `"Explain cache aware routing in deep details"`:
+* **Block 1:** `["Explain", "cache"]` $\rightarrow$ Matches `hash_1` (Prefix match: 2 tokens)
+* **Block 2:** `["aware", "routing"]` $\rightarrow$ Matches `hash_2` (Prefix match: 4 tokens)
+* **Block 3:** `["in", "deep"]` $\rightarrow$ `hash(hash_2 + "in" + "deep")` $\neq$ `hash_3` (Mismatch!)
+
+Since the hashes are cumulative, a match at `hash_2` guarantees that the *entire prefix* of 4 tokens matches exactly. The load balancer can confidently route the request to a pod caching up to `hash_2`, avoiding redundant prefill computation for the first 4 tokens.
 
 ## P/D Disaggregation
 
