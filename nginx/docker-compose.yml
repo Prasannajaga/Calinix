@@ -1,0 +1,63 @@
+x-service-build: &service-build
+  build:
+    context: .
+    dockerfile: Dockerfile
+
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./api-gateway.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - user-service
+      - order-service
+      - payment-service
+      - inventory-service
+      - notification-service
+
+  user-service:
+    <<: *service-build
+    image: user-service:latest
+    environment:
+      SERVICE_NAME: user-service
+      PORT: 8001
+    expose:
+      - "8001"
+
+  order-service:
+    <<: *service-build
+    image: order-service:latest
+    environment:
+      SERVICE_NAME: order-service
+      PORT: 8002
+    expose:
+      - "8002"
+
+  payment-service:
+    <<: *service-build
+    image: payment-service:latest
+    environment:
+      SERVICE_NAME: payment-service
+      PORT: 8003
+    expose:
+      - "8003"
+
+  inventory-service:
+    <<: *service-build
+    image: inventory-service:latest
+    environment:
+      SERVICE_NAME: inventory-service
+      PORT: 8004
+    expose:
+      - "8004"
+
+  notification-service:
+    <<: *service-build
+    image: notification-service:latest
+    environment:
+      SERVICE_NAME: notification-service
+      PORT: 8005
+    expose:
+      - "8005"

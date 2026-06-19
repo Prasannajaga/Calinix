@@ -2,5 +2,31 @@
 name = "cache-aware-routing"
 version = "0.1.0"
 edition = "2021"
+default-run = "cache-aware-routing"
+
+[lib]
+name = "calinix"
+path = "src/calinix/lib.rs"
+
+[[bin]]
+name = "base"
+path = "src/base/main.rs"
 
 [dependencies]
+axum = "0.7"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+http = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+
+[[bin]]
+name = "calinix-url-bench"
+path = "benchmark/calinix-url-bench.rs"

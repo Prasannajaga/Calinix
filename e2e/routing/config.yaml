@@ -1,0 +1,60 @@
+version: 1
+
+gateway:
+  port: 8080
+  strategy: cacheAware
+
+health:
+  endpoint: /health
+  intervalMs: 2000
+  timeoutMs: 20000
+  healthyThreshold: 2
+  unhealthyThreshold: 3
+
+cacheRegistry:
+  enabled: true
+  maxPods: 256
+  staleTtlMs: 30000
+
+upstreams:
+  single:
+    mode: single
+    pods:
+      - id: single-1
+        url: http://single-1:8101
+      - id: single-2
+        url: http://single-2:8102
+      - id: single-3
+        url: http://single-3:8103
+      - id: single-4
+        url: http://single-4:8104
+      - id: single-5
+        url: http://single-5:8105
+
+  dispatch:
+    mode: dispatch
+    prefill:
+      pods:
+        - id: prefill-1
+          url: http://prefill-1:8201
+        - id: prefill-2
+          url: http://prefill-2:8202
+        - id: prefill-3
+          url: http://prefill-3:8203
+        - id: prefill-4
+          url: http://prefill-4:8204
+        - id: prefill-5
+          url: http://prefill-5:8205
+
+    decode:
+      pods:
+        - id: decode-1
+          url: http://decode-1:8301
+        - id: decode-2
+          url: http://decode-2:8302
+        - id: decode-3
+          url: http://decode-3:8303
+        - id: decode-4
+          url: http://decode-4:8304
+        - id: decode-5
+          url: http://decode-5:8305

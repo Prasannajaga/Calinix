@@ -1,0 +1,7 @@
+.git
+target
+benchmark/results
+*.excalidraw
+*.excalidraw.png
+.agents
+.codex

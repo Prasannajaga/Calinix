@@ -1,0 +1,278 @@
+src/calinix/
+├── config/
+│   ├── calinix.toml
+│   ├── routes.toml
+│   └── upstreams.toml
+├── docs/
+│   ├── architecture.md
+│   ├── routing-flow.md
+│   ├── cache-registry.md
+│   ├── nginx-style-runtime.md
+│   ├── headers-contract.md
+│   ├── failure-model.md
+│   └── benchmarks.md 
+└── src/
+    ├── lib.rs
+    ├── bin/
+    │   ├── calinixd.rs
+    │   ├── calinixctl.rs
+    │   └── calinix_mock_worker.rs
+    │
+    ├── app/
+    │   ├── mod.rs
+    │   ├── bootstrap.rs
+    │   ├── state.rs
+    │   ├── shutdown.rs
+    │   └── reload.rs
+    │
+    ├── config/
+    │   ├── mod.rs
+    │   ├── loader.rs
+    │   ├── schema.rs
+    │   ├── validation.rs
+    │   └── watch.rs
+    │
+    ├── runtime/
+    │   ├── mod.rs
+    │   ├── traits.rs
+    │   ├── worker.rs
+    │   ├── acceptor.rs
+    │   ├── signal.rs
+    │   ├── graceful.rs
+    │   └── drivers/
+    │       ├── mod.rs
+    │       ├── tokio_driver.rs
+    │       └── noop_driver.rs
+    │
+    ├── proxy/
+    │   ├── mod.rs
+    │   ├── listener.rs
+    │   ├── request.rs
+    │   ├── response.rs
+    │   ├── forward.rs
+    │   ├── headers.rs
+    │   ├── body.rs
+    │   ├── timeout.rs
+    │   └── errors.rs
+    │
+    ├── protocol/
+    │   ├── mod.rs
+    │   ├── http.rs
+    │   ├── openai.rs
+    │   ├── routing_headers.rs
+    │   └── metadata.rs
+    │
+    ├── routing/
+    │   ├── mod.rs
+    │   ├── context.rs
+    │   ├── pipeline.rs
+    │   ├── prepare.rs
+    │   ├── filter.rs
+    │   ├── score.rs
+    │   ├── pick.rs
+    │   ├── plan.rs
+    │   └── profiles/
+    │       ├── mod.rs
+    │       ├── cache_aware.rs
+    │       ├── least_load.rs
+    │       ├── sticky_session.rs
+    │       └── disaggregated.rs
+    │
+    ├── cache_registry/
+    │   ├── mod.rs
+    │   ├── host_bitmap.rs
+    │   ├── block_hash.rs
+    │   ├── cumulative_hash.rs
+    │   ├── sharded_index.rs
+    │   ├── fibonacci.rs
+    │   ├── prefix_query.rs
+    │   ├── events.rs
+    │   ├── alive.rs
+    │   ├── cleanup.rs
+    │   └── snapshot.rs
+    │
+    ├── upstream/
+    │   ├── mod.rs
+    │   ├── pod.rs
+    │   ├── pool.rs
+    │   ├── health.rs
+    │   ├── load.rs
+    │   ├── roles.rs
+    │   ├── discovery.rs
+    │   └── selection.rs
+    │
+    ├── session/
+    │   ├── mod.rs
+    │   ├── key.rs
+    │   ├── sticky.rs
+    │   └── store.rs
+    │
+    ├── event_ingest/
+    │   ├── mod.rs
+    │   ├── server.rs
+    │   ├── protocol.rs
+    │   ├── validator.rs
+    │   ├── apply.rs
+    │   └── replay.rs
+    │
+    ├── control_plane/
+    │   ├── mod.rs
+    │   ├── admin_api.rs
+    │   ├── stats_api.rs
+    │   ├── dump_api.rs
+    │   └── reload_api.rs  
+
+
+
+2. what each file should handle:
+
+
+cache_registry/
+  host_bitmap.rs      fixed 256-bit pod bitmap
+  block_hash.rs       block hash type
+  cumulative_hash.rs  prefix-chain hash
+  sharded_index.rs    blockHash -> HostBitmap
+  fibonacci.rs        shard distribution
+  prefix_query.rs     binary prefix matching
+  events.rs           Registered / Evicted / Shutdown
+  alive.rs            global alive bitmap
+  cleanup.rs          background dead-pod cleanup
+
+routing/
+  prepare.rs   hash prompt, build cumulative chain, extract mode/session
+  filter.rs    alive, role, health, load, tenant
+  score.rs     cache depth, load, sticky, locality
+  pick.rs      choose final pod/pods
+  plan.rs      build forwarding plan
+
+proxy/
+  listener.rs   accepts client requests
+  forward.rs    sends request to selected upstream
+  headers.rs    injects routing headers
+  timeout.rs    request/upstream timeout policy
+
+upstream/
+  pod.rs        pod metadata
+  roles.rs      prefill/decode/both
+  load.rs       inflight, queue depth, capacity
+  health.rs     health status
+  discovery.rs  static/config/k8s later
+  pool.rs       reusable upstream connections
+
+
+event_ingest/
+  server.rs
+  protocol.rs
+  apply.rs
+
+This receives cache events from workers.
+Events:
+
+Registered(block_hash, pod_id)
+Evicted(block_hash, pod_id)
+Shutdown(pod_id)
+
+Apply path:
+
+Registered -> cache_registry.set(block_hash, pod)
+Evicted    -> cache_registry.clear(block_hash, pod)
+Shutdown   -> alive_bitmap.clear(pod)
+
+Shutdown must be fast. Do not scan shards in the hot event path. Background cleanup belongs in cache_registry/cleanup.rs.
+
+IMPORTAN:you should only implement what mentioned here for others
+directories and files , just create it leave it blank, we implement it later 
+
+
+3. complete workflow
+
+Client
+  |
+  v
+proxy/listener.rs
+  |
+  v
+routing/prepare.rs
+  |
+  |-- tokenize/hash prompt
+  |-- cumulative hash chain
+  |-- routing mode: single | disaggregated
+  |-- session key
+  v
+cache_registry/prefix_query.rs
+  |
+  |-- Fibonacci shard lookup
+  |-- blockHash -> HostBitmap
+  |-- alive bitmap mask
+  |-- binary prefix query
+  v
+routing/filter.rs
+  |
+  |-- alive
+  |-- healthy
+  |-- role-compatible
+  |-- under load limit
+  v
+routing/score.rs
+  |
+  |-- cache prefix score
+  |-- least-load score
+  |-- sticky session score
+  |-- locality score
+  v
+routing/pick.rs
+  |
+  |-- single: choose target pod
+  |-- disaggregated: choose prefill pod + decode pod
+  v
+routing/plan.rs
+  |
+  |-- build forwarding metadata
+  v
+proxy/forward.rs
+  |
+  |-- inject headers
+  |-- forward to worker/coordinator
+  v
+Backend Worker Server
+
+
+
+1. Receive request
+2. Read mode:
+   single | disaggregated
+
+3. Hash prompt into cumulative block hashes
+
+4. Query registry:
+   prefix_depth_by_pod =
+     binary_prefix_match(
+       cumulative_hashes,
+       candidate_pods & alive_bitmap
+     )
+
+5. If any pod has cache:
+   choose pod with best prefix depth
+   tie-break by least load
+
+6. If no cache:
+   choose least-loaded alive pod
+
+7. If mode = single:
+   forward to chosen pod with:
+     x-routing-mode: single
+     x-target-pod-id: chosen
+
+8. If mode = disaggregated:
+   choose prefill pod:
+     cache-aware + load-aware
+
+   choose decode pod:
+     least-load + locality to prefill pod
+
+   forward to worker server with:
+     x-routing-mode: disaggregated
+     x-prefill-pod-id: selected_prefill
+     x-decode-pod-id: selected_decode
+
+

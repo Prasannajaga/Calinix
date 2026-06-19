@@ -1,0 +1,286 @@
+import asyncio
+import json
+import os
+import random
+import time
+import urllib.error
+import urllib.request
+from typing import Any, AsyncIterator
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse, StreamingResponse
+
+
+SERVICE_NAME = os.getenv("SERVICE_NAME", "mock-pod")
+POD_ID = os.getenv("POD_ID")
+CALINIX_EVENT_URL = os.getenv(
+    "CALINIX_EVENT_URL",
+    os.getenv("CALINIX_EVENTS_URL", "http://calinix:8080/events"),
+).rstrip("/")
+STREAM_TOKEN_COUNT = int(os.getenv("MOCK_STREAM_TOKEN_COUNT", "32"))
+STREAM_DELAY_MS = int(os.getenv("MOCK_STREAM_DELAY_MS", "25"))
+STREAM_TOKENS = [
+    "cache",
+    "route",
+    "prefix",
+    "token",
+    "latency",
+    "batch",
+    "decode",
+    "prefill",
+    "shard",
+    "bitmap",
+    "prompt",
+    "worker",
+]
+
+app = FastAPI(title=f"{SERVICE_NAME} mock OpenAI pod")
+
+next_hash = 1
+
+
+@app.get("/health", response_class=PlainTextResponse)
+async def health() -> str:
+    return "ok" + SERVICE_NAME
+
+
+@app.post("/v1/chat/completions", response_model=None)
+async def chat_completions(request: Request) -> dict[str, Any] | StreamingResponse:
+    return await echo_openai_request(request)
+
+
+@app.post("/v1/completions", response_model=None)
+async def completions(request: Request) -> dict[str, Any] | StreamingResponse:
+    return await echo_openai_request(request)
+
+
+@app.post("/v1/embeddings", response_model=None)
+async def embeddings(request: Request) -> dict[str, Any] | StreamingResponse:
+    return await echo_openai_request(request)
+
+
+async def echo_openai_request(request: Request) -> dict[str, Any] | StreamingResponse:
+    headers = forwarded_headers(request)
+    body = await request.json()
+    emitted_events = emit_event_from_header(request.headers.get("x-event"))
+
+    if body.get("stream") is True:
+        return StreamingResponse(
+            stream_openai_chunks(request.url.path, body, headers, emitted_events, request),
+            media_type="text/event-stream",
+            headers={
+                "cache-control": "no-cache",
+                "x-accel-buffering": "no",
+            },
+        )
+
+    return {
+        "service": SERVICE_NAME,
+        "path": request.url.path,
+        "headers": headers,
+        "body": body,
+        "events": emitted_events,
+    }
+
+
+def forwarded_headers(request: Request) -> dict[str, str]:
+    return {
+        key.lower(): value
+        for key, value in request.headers.items()
+        if key.lower().startswith("x-calinix-")
+        or key.lower() in {"authorization", "x-event"}
+    }
+
+
+async def stream_openai_chunks(
+    path: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+    emitted_events: list[dict[str, Any]],
+    request: Request | None = None,
+) -> AsyncIterator[str]:
+    stream_id = f"mock-{SERVICE_NAME}-{int(time.time() * 1000)}"
+    model = str(body.get("model", "mock-model"))
+    created = int(time.time())
+    chunk_count = stream_token_count(body, request)
+    delay_seconds = stream_delay_ms(request) / 1000
+
+    yield sse_data(
+        {
+            "id": stream_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "service": SERVICE_NAME,
+            "path": path,
+            "headers": headers,
+            "events": emitted_events,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                    "finish_reason": None,
+                }
+            ],
+        }
+    )
+
+    for _ in range(chunk_count):
+        if delay_seconds:
+            await asyncio.sleep(delay_seconds)
+        yield sse_data(
+            {
+                "id": stream_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": random_token()},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+
+    yield sse_data(
+        {
+            "id": stream_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    )
+    yield "data: [DONE]\n\n"
+
+
+def stream_token_count(body: dict[str, Any], request: Request | None = None) -> int:
+    header_tokens = mock_header_int(request, "x-mock-stream-token-count")
+    if header_tokens is not None:
+        return max(1, header_tokens)
+
+    max_tokens = body.get("max_tokens")
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        return max_tokens
+    return STREAM_TOKEN_COUNT
+
+
+def stream_delay_ms(request: Request | None = None) -> int:
+    header_delay = mock_header_int(request, "x-mock-stream-delay-ms")
+    if header_delay is not None:
+        return max(0, header_delay)
+    return max(0, STREAM_DELAY_MS)
+
+
+def mock_header_int(request: Request | None, name: str) -> int | None:
+    if request is None:
+        return None
+
+    value = request.headers.get(name)
+    if value is None:
+        return None
+
+    try:
+        return int(value)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=f"{name} must be an integer") from err
+
+
+def random_token() -> str:
+    return f" {random.choice(STREAM_TOKENS)}"
+
+
+def sse_data(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+
+
+def default_pod_id() -> int | str:
+    if POD_ID is not None:
+        return int(POD_ID)
+    return SERVICE_NAME
+
+
+def emit_event_from_header(event_name: str | None) -> list[dict[str, Any]]:
+    if not event_name:
+        return []
+
+    normalized = event_name.lower()
+    if normalized in {"register", "prefixcached", "prefix_cached"}:
+        event = build_prefix_event("prefixCached")
+    elif normalized in {"evict", "prefixevicted", "prefix_evicted"}:
+        event = build_prefix_event("prefixEvicted")
+    elif normalized in {"shutdown", "podshutdown", "pod_shutdown"}:
+        event = build_shutdown_event()
+    else:
+        raise HTTPException(status_code=400, detail=f"unsupported mock event: {event_name}")
+
+    event["result"] = post_event(event)
+    return [event]
+
+
+def build_prefix_event(event_type: str) -> dict[str, Any]:
+    return {
+        "type": event_type,
+        "podId": default_pod_id(),
+        "pod": SERVICE_NAME,
+        "cumulativeHash": next_cumulative_hash(),
+    }
+
+
+def build_shutdown_event() -> dict[str, Any]:
+    return {"type": "podShutdown", "podId": default_pod_id(), "pod": SERVICE_NAME}
+
+
+def post_event(event: dict[str, Any]) -> dict[str, Any]:
+    endpoint = event_endpoint(event)
+    body = json.dumps(event).encode("utf-8")
+    request = urllib.request.Request(
+        f"{CALINIX_EVENT_URL}/{endpoint}",
+        data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            response_body = response.read().decode("utf-8")
+            return {
+                "status": response.status,
+                "body": json.loads(response_body) if response_body else None,
+            }
+    except urllib.error.HTTPError as err:
+        detail = err.read().decode("utf-8")
+        raise HTTPException(
+            status_code=502,
+            detail=f"calinix event API rejected {event['type']}: {detail}",
+        ) from err
+    except urllib.error.URLError as err:
+        raise HTTPException(
+            status_code=502,
+            detail=f"failed to call calinix event API at {CALINIX_EVENT_URL}: {err}",
+        ) from err
+
+
+def event_endpoint(event: dict[str, Any]) -> str:
+    if event["type"] == "prefixCached":
+        return "register"
+    if event["type"] == "prefixEvicted":
+        return "evict"
+    if event["type"] == "podShutdown":
+        return "shutdown"
+    raise HTTPException(status_code=400, detail=f"unsupported mock event: {event['type']}")
+
+
+def next_cumulative_hash() -> int:
+    global next_hash
+    value = next_hash
+    next_hash += 1
+    return value
