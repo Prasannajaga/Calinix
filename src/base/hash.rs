@@ -21,12 +21,18 @@ pub fn tokenize(prompt: &str) -> Vec<String> {
 }
 
 pub fn hash_block(tokens: &[String]) -> BlockHash {
-    let mut bytes = Vec::new();
+    let mut hash = FNV_OFFSET;
     for token in tokens {
-        bytes.extend_from_slice(token.as_bytes());
-        bytes.push(0xff);
+        // Incrementally hash token bytes
+        for byte in token.as_bytes() {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        // Hash separator
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(FNV_PRIME);
     }
-    fnv1a64(&bytes)
+    hash
 }
 
 pub fn combine_cumulative(prev: BlockHash, block_hash: BlockHash) -> BlockHash {

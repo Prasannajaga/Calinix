@@ -18,7 +18,7 @@ pub use block_hash::{
 pub use cleanup::{cleanup_dead_pod, cleanup_not_alive, CleanupReport};
 pub use cumulative_hash::{
     combine_cumulative, cumulative_hashes_from_blocks, make_synthetic_chain,
-    prompt_to_cumulative_hashes, prompt_to_cumulative_hashes_with_block_size,
+    prompt_to_cumulative_hashes, prompt_to_cumulative_hashes_with_block_size, prompt_to_cumulative_hashes_streaming,
 };
 pub use events::{apply_event, CacheEvent};
 pub use fibonacci::{

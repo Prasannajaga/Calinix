@@ -48,7 +48,7 @@ impl ScoreStage {
     ) -> Option<PickedCandidate> {
         let cache_depths =
             cache_registry.longest_prefix_lengths(&ctx.cumulative_hashes, candidates.clone());
-        self.pick_best_candidate(
+        self.best_candidate(
             ctx,
             RequiredRole::Single,
             candidates,
@@ -72,7 +72,7 @@ impl ScoreStage {
         loads: &LoadState,
     ) -> Option<PodId> {
         let cache_depths = vec![0; upstreams.pods.len()];
-        self.pick_best_candidate(
+        self.best_candidate(
             &RoutingContext {
                 request_id: String::new(),
                 path: String::new(),
@@ -85,7 +85,6 @@ impl ScoreStage {
                     session_key: None,
                     stream: false,
                 },
-                tokens: Vec::new(),
                 cumulative_hashes: Vec::new(),
                 cache_namespace: String::new(),
                 candidate_single: HostBitmap::empty(),
@@ -104,7 +103,7 @@ impl ScoreStage {
         .map(|score| score.pod_id)
     }
 
-    pub fn score_candidates(
+    pub fn best_candidate(
         &self,
         ctx: &RoutingContext,
         role: RequiredRole,
@@ -114,10 +113,11 @@ impl ScoreStage {
         loads: &LoadState,
         sticky: &StickyStore,
         selected_prefill: Option<PodId>,
-    ) -> Vec<CandidateScore> {
+    ) -> Result<CandidateScore, RoutingError> {
         let weights = self.weights_for(role);
         let max_depth = ctx.cumulative_hashes.len();
-        let mut scores = Vec::new();
+        let mut best: Option<CandidateScore> = None;
+
         candidates.for_each_set_bit(|pod_id| {
             if let Some(score) = self.score_candidate(
                 ctx,
@@ -130,38 +130,13 @@ impl ScoreStage {
                 sticky,
                 selected_prefill,
             ) {
-                scores.push(score);
+                if best.as_ref().map_or(true, |b| better_candidate_order(&score, b) == std::cmp::Ordering::Less) {
+                    best = Some(score);
+                }
             }
         });
 
-        scores.sort_by(better_candidate_order);
-        scores
-    }
-
-    pub fn pick_best_candidate(
-        &self,
-        ctx: &RoutingContext,
-        role: RequiredRole,
-        candidates: HostBitmap,
-        cache_depths: &[usize],
-        upstreams: &UpstreamCatalog,
-        loads: &LoadState,
-        sticky: &StickyStore,
-        selected_prefill: Option<PodId>,
-    ) -> Result<CandidateScore, RoutingError> {
-        self.score_candidates(
-            ctx,
-            role,
-            candidates,
-            cache_depths,
-            upstreams,
-            loads,
-            sticky,
-            selected_prefill,
-        )
-        .into_iter()
-        .next()
-        .ok_or(RoutingError::NoCandidates)
+        best.ok_or(RoutingError::NoCandidates)
     }
 
     fn score_candidate(

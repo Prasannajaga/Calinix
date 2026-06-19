@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
 
 use super::block_hash::BlockHash;
-use super::fibonacci::{shard_for_with_count, DEFAULT_SHARD_COUNT};
+use super::fibonacci::shard_for_with_count;
 use super::host_bitmap::HostBitmap;
 use tracing::debug;
 
@@ -16,7 +16,7 @@ pub struct ShardedBlockIndexer {
 
 impl ShardedBlockIndexer {
     pub fn new(pod_count: usize) -> Self {
-        Self::with_shards(pod_count, DEFAULT_SHARD_COUNT)
+        Self::with_shards(pod_count, super::fibonacci::DEFAULT_SHARD_COUNT)
     }
 
     pub fn with_shards(pod_count: usize, shard_count: usize) -> Self {
@@ -123,7 +123,7 @@ impl ShardedBlockIndexer {
             .read()
             .expect("index shard poisoned")
             .get(&cumulative_hash)
-            .cloned()
+            .copied()
             .unwrap_or_else(HostBitmap::empty)
     }
 
@@ -132,7 +132,7 @@ impl ShardedBlockIndexer {
     }
 
     pub fn alive(&self) -> HostBitmap {
-        self.alive.read().expect("alive bitmap poisoned").clone()
+        *self.alive.read().expect("alive bitmap poisoned")
     }
 
     pub fn cleanup_dead_pod(&self, pod_id: usize) {
@@ -167,11 +167,7 @@ impl ShardedBlockIndexer {
         let mut block_owners = Vec::new();
         for shard in &self.shards {
             let guard = shard.read().expect("index shard poisoned");
-            block_owners.extend(
-                guard
-                    .iter()
-                    .map(|(block_hash, owners)| (*block_hash, owners.clone())),
-            );
+            block_owners.extend(guard.iter().map(|(block_hash, owners)| (*block_hash, *owners)));
         }
         block_owners.sort_by_key(|(block_hash, _)| *block_hash);
         block_owners

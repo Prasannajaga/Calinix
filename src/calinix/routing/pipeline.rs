@@ -4,7 +4,6 @@ use crate::cache_registry::{BlockHash, HostBitmap};
 use crate::protocol::routing_headers::{inject_routing_headers, CalinixMode};
 use crate::routing::context::RoutingContext;
 use crate::routing::filter::{FilterStage, RequiredRole, RoutePolicy};
-use crate::routing::pick::PickStage;
 use crate::routing::plan::RoutingPlan;
 use crate::routing::prepare::{PrepareInput, PrepareStage};
 use crate::routing::score::{ScoreStage, ScoreWeights};
@@ -140,13 +139,12 @@ fn build_single_plan(
     ctx: &RoutingContext,
 ) -> Result<RoutingPlan, RoutingError> {
     let filter = FilterStage;
-    let pick = PickStage;
     let candidates =
         filter.candidates_for_role(upstreams, loads, RequiredRole::Single, route_policy, alive);
     let cache_depths = registry
         .cache_registry
         .longest_prefix_lengths(&ctx.cumulative_hashes, candidates.clone());
-    let scores = score.score_candidates(
+    let picked = score.best_candidate(
         ctx,
         RequiredRole::Single,
         candidates,
@@ -155,8 +153,7 @@ fn build_single_plan(
         loads,
         sticky,
         None,
-    );
-    let picked = pick.pick_best(&scores)?;
+    )?;
     let pod_id = picked.pod_id;
     let pod = upstreams
         .pod(pod_id)
@@ -184,7 +181,6 @@ fn build_disaggregated_plan(
     ctx: &RoutingContext,
 ) -> Result<RoutingPlan, RoutingError> {
     let filter = FilterStage;
-    let pick = PickStage;
     let prefill_candidates = filter.candidates_for_role(
         upstreams,
         loads,
@@ -195,7 +191,7 @@ fn build_disaggregated_plan(
     let prefill_cache_depths = registry
         .cache_registry
         .longest_prefix_lengths(&ctx.cumulative_hashes, prefill_candidates.clone());
-    let prefill_scores = score.score_candidates(
+    let picked_prefill = score.best_candidate(
         ctx,
         RequiredRole::Prefill,
         prefill_candidates,
@@ -204,8 +200,7 @@ fn build_disaggregated_plan(
         loads,
         sticky,
         None,
-    );
-    let picked_prefill = pick.pick_best(&prefill_scores)?;
+    )?;
     let prefill_pod_id = picked_prefill.pod_id;
     let prefill_pod = upstreams
         .pod(prefill_pod_id)
@@ -217,7 +212,7 @@ fn build_disaggregated_plan(
     let decode_cache_depths = registry
         .cache_registry
         .longest_prefix_lengths(&ctx.cumulative_hashes, decode_candidates.clone());
-    let decode_scores = score.score_candidates(
+    let picked_decode = score.best_candidate(
         ctx,
         RequiredRole::Decode,
         decode_candidates,
@@ -226,8 +221,8 @@ fn build_disaggregated_plan(
         loads,
         sticky,
         Some(prefill_pod_id),
-    );
-    let decode_pod_id = pick.pick_one(&decode_scores)?;
+    )?;
+    let decode_pod_id = picked_decode.pod_id;
 
     Ok(RoutingPlan::Disaggregated {
         request_id: ctx.request_id.clone(),

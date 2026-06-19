@@ -2,7 +2,7 @@ use super::block_hash::BlockHash;
 use super::host_bitmap::HostBitmap;
 use super::sharded_index::ShardedBlockIndexer;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SearchFrame {
     min_prefix_depth: usize,
     max_prefix_depth: usize,
@@ -28,7 +28,8 @@ pub fn longest_prefix_lengths_for_candidates(
     cumulative_hashes: &[BlockHash],
     candidate_pods: HostBitmap,
 ) -> Vec<usize> {
-    let mut lengths = vec![0; result_len(indexer, &candidate_pods)];
+    let result_size = indexer.pod_count().max(candidate_pods.highest_set_bit_plus_one());
+    let mut lengths = vec![0; result_size];
     let mut stack = Vec::with_capacity(cumulative_hashes.len().saturating_add(1));
     longest_prefix_lengths_into(
         indexer,
@@ -61,11 +62,11 @@ pub fn longest_prefix_lengths_into(
             continue;
         }
         if frame.min_prefix_depth == frame.max_prefix_depth {
-            for pod_id in frame.candidate_pods.iter_set_bits() {
+            frame.candidate_pods.for_each_set_bit(|pod_id| {
                 if pod_id < lengths.len() {
                     lengths[pod_id] = frame.min_prefix_depth;
                 }
-            }
+            });
             continue;
         }
 
@@ -174,7 +175,8 @@ pub fn longest_prefix_lengths_debug(
     cumulative_hashes: &[BlockHash],
     candidate_pods: HostBitmap,
 ) -> PrefixMatchDebug {
-    let mut lengths = vec![0; result_len(indexer, &candidate_pods)];
+    let result_size = indexer.pod_count().max(candidate_pods.highest_set_bit_plus_one());
+    let mut lengths = vec![0; result_size];
     let mut frames_processed = 0;
     let mut shard_lookups = 0;
     let mut bitmap_intersections = 1;
@@ -191,9 +193,11 @@ pub fn longest_prefix_lengths_debug(
             continue;
         }
         if frame.min_prefix_depth == frame.max_prefix_depth {
-            for pod_id in frame.candidate_pods.iter_set_bits() {
-                lengths[pod_id] = frame.min_prefix_depth;
-            }
+            frame.candidate_pods.for_each_set_bit(|pod_id| {
+                if pod_id < lengths.len() {
+                    lengths[pod_id] = frame.min_prefix_depth;
+                }
+            });
             continue;
         }
 
@@ -224,12 +228,6 @@ pub fn longest_prefix_lengths_debug(
         shard_lookups,
         bitmap_intersections,
     }
-}
-
-fn result_len(indexer: &ShardedBlockIndexer, candidate_pods: &HostBitmap) -> usize {
-    indexer
-        .pod_count()
-        .max(candidate_pods.highest_set_bit_plus_one())
 }
 
 #[cfg(test)]

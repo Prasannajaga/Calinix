@@ -3,6 +3,8 @@ teds.txt
 
 FLOW.md
 e2e/
+benchmark/results/
+benchmark/data/
 benchmark/
 *.pyc
 benchmark_focus.md

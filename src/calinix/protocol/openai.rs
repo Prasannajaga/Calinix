@@ -1,7 +1,8 @@
 use std::fmt;
 
 use http::HeaderMap;
-use serde_json::Value;
+use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 const SESSION_KEY_HEADER: &str = "x-calinix-session-key";
 
@@ -41,6 +42,49 @@ impl fmt::Display for OpenAiParseError {
 
 impl std::error::Error for OpenAiParseError {}
 
+#[derive(Deserialize, Default)]
+struct OpenAiRequestDto<'a> {
+    #[serde(borrow)]
+    model: Option<&'a str>,
+    #[serde(default)]
+    stream: bool,
+    #[serde(borrow)]
+    user: Option<&'a str>,
+
+    // For chat completions
+    #[serde(borrow, default)]
+    messages: Option<Vec<MessageDto<'a>>>,
+
+    // For completions
+    #[serde(borrow)]
+    prompt: Option<PromptDto<'a>>,
+
+    // For embeddings
+    #[serde(borrow)]
+    input: Option<PromptDto<'a>>,
+}
+
+#[derive(Deserialize)]
+struct MessageDto<'a> {
+    #[serde(borrow)]
+    content: Option<MessageContentDto<'a>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MessageContentDto<'a> {
+    Text(&'a str),
+    Other(IgnoredAny),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PromptDto<'a> {
+    Text(&'a str),
+    Array(Vec<&'a str>),
+    Other(IgnoredAny),
+}
+
 pub fn extract_openai_routing_view(
     path: &str,
     headers: &HeaderMap,
@@ -57,21 +101,24 @@ pub fn extract_openai_routing_view(
         });
     }
 
-    let value = parse_body(body)?;
-    let model = value
-        .get("model")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let stream = value
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let session_key = session_key(headers, &value);
+    let dto: OpenAiRequestDto = if body.is_empty() {
+        OpenAiRequestDto::default()
+    } else {
+        serde_json::from_slice(body).map_err(OpenAiParseError::InvalidJson)?
+    };
+
+    let model = dto.model.map(ToOwned::to_owned);
+    let stream = dto.stream;
+    let session_key = session_key_header(headers).or_else(|| {
+        dto.user
+            .filter(|u| !u.is_empty())
+            .map(ToOwned::to_owned)
+    });
 
     let prompt_text = match kind {
-        OpenAiRequestKind::ChatCompletions => extract_chat_prompt(&value)?,
-        OpenAiRequestKind::Completions => extract_completion_prompt(&value)?,
-        OpenAiRequestKind::Embeddings => extract_embedding_input(&value)?,
+        OpenAiRequestKind::ChatCompletions => extract_chat_prompt(dto.messages)?,
+        OpenAiRequestKind::Completions => extract_completion_prompt(dto.prompt)?,
+        OpenAiRequestKind::Embeddings => extract_embedding_input(dto.input)?,
         OpenAiRequestKind::Unknown => String::new(),
     };
 
@@ -94,98 +141,45 @@ fn request_kind(path: &str) -> OpenAiRequestKind {
     }
 }
 
-fn parse_body(body: &[u8]) -> Result<Value, OpenAiParseError> {
-    if body.is_empty() {
-        return Ok(Value::Object(Default::default()));
-    }
-
-    serde_json::from_slice(body).map_err(OpenAiParseError::InvalidJson)
-}
-
-fn extract_chat_prompt(value: &Value) -> Result<String, OpenAiParseError> {
-    let messages =
-        value
-            .get("messages")
-            .and_then(Value::as_array)
-            .ok_or(OpenAiParseError::InvalidShape(
-                "chat completions require messages[]",
-            ))?;
+fn extract_chat_prompt(messages: Option<Vec<MessageDto>>) -> Result<String, OpenAiParseError> {
+    let messages = messages.ok_or(OpenAiParseError::InvalidShape(
+        "chat completions require messages[]",
+    ))?;
 
     let mut parts = Vec::new();
     for message in messages {
-        match message.get("content") {
-            Some(Value::String(text)) => parts.push(text.as_str()),
-            Some(Value::Array(_)) | Some(Value::Object(_)) => {}
-            Some(Value::Null) | None => {}
-            Some(_) => {
-                return Err(OpenAiParseError::InvalidShape(
-                    "messages[].content must be a string when present",
-                ));
-            }
+        match message.content {
+            Some(MessageContentDto::Text(text)) => parts.push(text),
+            Some(MessageContentDto::Other(_)) => {}
+            None => {}
         }
     }
 
     Ok(parts.join("\n"))
 }
 
-fn extract_completion_prompt(value: &Value) -> Result<String, OpenAiParseError> {
-    let prompt = value
-        .get("prompt")
-        .ok_or(OpenAiParseError::InvalidShape("completions require prompt"))?;
+fn extract_completion_prompt(prompt: Option<PromptDto>) -> Result<String, OpenAiParseError> {
+    let prompt = prompt.ok_or(OpenAiParseError::InvalidShape("completions require prompt"))?;
 
     match prompt {
-        Value::String(text) => Ok(text.clone()),
-        Value::Array(items) => {
-            let mut parts = Vec::with_capacity(items.len());
-            for item in items {
-                let Some(text) = item.as_str() else {
-                    return Err(OpenAiParseError::InvalidShape(
-                        "prompt arrays must contain only strings",
-                    ));
-                };
-                parts.push(text);
-            }
-            Ok(parts.join("\n"))
-        }
-        _ => Err(OpenAiParseError::InvalidShape(
+        PromptDto::Text(text) => Ok(text.to_owned()),
+        PromptDto::Array(items) => Ok(items.join("\n")),
+        PromptDto::Other(_) => Err(OpenAiParseError::InvalidShape(
             "prompt must be a string or string array",
         )),
     }
 }
 
-fn extract_embedding_input(value: &Value) -> Result<String, OpenAiParseError> {
-    let input = value
-        .get("input")
-        .ok_or(OpenAiParseError::InvalidShape("embeddings require input"))?;
+fn extract_embedding_input(input: Option<PromptDto>) -> Result<String, OpenAiParseError> {
+    let input = input.ok_or(OpenAiParseError::InvalidShape("embeddings require input"))?;
 
     match input {
-        Value::String(text) => Ok(text.clone()),
-        Value::Array(items) => {
-            let mut parts = Vec::with_capacity(items.len());
-            for item in items {
-                let Some(text) = item.as_str() else {
-                    return Err(OpenAiParseError::InvalidShape(
-                        "embedding input arrays must contain only strings",
-                    ));
-                };
-                parts.push(text);
-            }
-            Ok(parts.join("\n"))
-        }
-        _ => Err(OpenAiParseError::InvalidShape(
+        PromptDto::Text(text) => Ok(text.to_owned()),
+        PromptDto::Array(items) => Ok(items.join("\n")),
+        PromptDto::Other(_) => Err(OpenAiParseError::InvalidShape(
             "embedding input must be a string or string array",
         )),
     }
-}
-
-fn session_key(headers: &HeaderMap, value: &Value) -> Option<String> {
-    session_key_header(headers).or_else(|| {
-        value
-            .get("user")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
 }
 
 fn session_key_header(headers: &HeaderMap) -> Option<String> {

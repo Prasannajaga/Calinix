@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use http::HeaderMap;
 
-use crate::cache_registry::{cumulative_hashes_from_blocks, hash_block, tokenize, HostBitmap};
+use crate::cache_registry::{prompt_to_cumulative_hashes_streaming, HostBitmap};
 use crate::protocol::openai::extract_openai_routing_view;
 use crate::protocol::routing_headers::{CalinixMode, MODE, REQUEST_ID};
 use crate::routing::context::{PreparedRequest, RoutingContext};
@@ -26,13 +26,8 @@ pub struct PrepareStage {
 impl PrepareStage {
     pub fn run(&self, input: PrepareInput<'_>) -> Result<PreparedRequest, RoutingError> {
         let openai = extract_openai_routing_view(input.path, input.headers, input.body)?;
-        let tokens = tokenize(&openai.prompt_text);
         let block_size = self.block_size.max(1);
-        let block_hashes = tokens
-            .chunks(block_size)
-            .map(hash_block)
-            .collect::<Vec<_>>();
-        let cumulative_hashes = cumulative_hashes_from_blocks(&block_hashes);
+        let cumulative_hashes = prompt_to_cumulative_hashes_streaming(&openai.prompt_text, block_size);
         let cache_namespace = cache_namespace(openai.model.as_deref(), block_size);
         let mode = requested_mode(input.headers)?.unwrap_or_else(|| self.default_mode.clone());
         let request_id = request_id(input.headers);
@@ -44,7 +39,6 @@ impl PrepareStage {
                 method: input.method.to_string(),
                 mode,
                 openai,
-                tokens,
                 cumulative_hashes,
                 cache_namespace,
                 candidate_single: HostBitmap::empty(),
@@ -119,10 +113,6 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(
-            prepared.ctx.tokens,
-            vec!["one", "two", "three", "four", "five"]
-        );
         assert_eq!(prepared.ctx.cumulative_hashes.len(), 3);
         assert_eq!(
             prepared.ctx.cache_namespace,
