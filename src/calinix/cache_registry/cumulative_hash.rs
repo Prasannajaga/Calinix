@@ -31,10 +31,7 @@ pub fn prompt_to_cumulative_hashes_with_block_size(
     prompt_to_cumulative_hashes_streaming(prompt, block_size)
 }
 
-pub fn prompt_to_cumulative_hashes_streaming(
-    prompt: &str,
-    block_size: usize,
-) -> Vec<BlockHash> {
+pub fn prompt_to_cumulative_hashes_streaming(prompt: &str, block_size: usize) -> Vec<BlockHash> {
     let block_size = block_size.max(1);
     let mut cumulative = Vec::new();
     let mut prev_cumulative: BlockHash = 0;
@@ -80,7 +77,10 @@ pub fn make_synthetic_chain(chain_id: u64, blocks: usize) -> Vec<BlockHash> {
 
 #[cfg(test)]
 mod tests {
-    use super::{prompt_to_cumulative_hashes, prompt_to_cumulative_hashes_streaming, cumulative_hashes_from_blocks};
+    use super::{
+        cumulative_hashes_from_blocks, prompt_to_cumulative_hashes,
+        prompt_to_cumulative_hashes_streaming,
+    };
     use crate::cache_registry::block_hash::prompt_to_block_hashes_with_size;
 
     #[test]
@@ -97,14 +97,14 @@ mod tests {
     fn streaming_matches_original_behavior() {
         let prompt = "one two three four five six seven eight nine ten eleven twelve";
         let block_size = 3;
-        
+
         // original
         let blocks = prompt_to_block_hashes_with_size(prompt, block_size);
         let orig = cumulative_hashes_from_blocks(&blocks);
-        
+
         // streaming
         let stream = prompt_to_cumulative_hashes_streaming(prompt, block_size);
-        
+
         assert_eq!(orig, stream);
     }
 }

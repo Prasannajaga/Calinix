@@ -11,6 +11,37 @@ use crate::routing::RoutingError;
 use crate::session::StickyStore;
 use crate::upstream::{LoadState, RuntimeRegistry, UpstreamCatalog};
 
+const INLINE_CACHE_DEPTHS: usize = 32;
+const MAX_CACHE_DEPTHS: usize = 256;
+
+enum CacheDepthStorage {
+    Inline {
+        data: [usize; INLINE_CACHE_DEPTHS],
+        len: usize,
+    },
+    Heap(Vec<usize>),
+}
+
+impl CacheDepthStorage {
+    fn new(len: usize) -> Self {
+        if len <= INLINE_CACHE_DEPTHS {
+            Self::Inline {
+                data: [0; INLINE_CACHE_DEPTHS],
+                len,
+            }
+        } else {
+            Self::Heap(vec![0; len])
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [usize] {
+        match self {
+            Self::Inline { data, len } => &mut data[..*len],
+            Self::Heap(data) => data.as_mut_slice(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RoutedRequest {
     pub plan: RoutingPlan,
@@ -141,14 +172,18 @@ fn build_single_plan(
     let filter = FilterStage;
     let candidates =
         filter.candidates_for_role(upstreams, loads, RequiredRole::Single, route_policy, alive);
-    let cache_depths = registry
-        .cache_registry
-        .longest_prefix_lengths(&ctx.cumulative_hashes, candidates.clone());
+    let mut cache_depths = CacheDepthStorage::new(registry.total_pods().min(MAX_CACHE_DEPTHS));
+    let depths_slice = cache_depths.as_mut_slice();
+    registry.cache_registry.longest_prefix_lengths_into(
+        &ctx.cumulative_hashes,
+        candidates.clone(),
+        depths_slice,
+    );
     let picked = score.best_candidate(
         ctx,
         RequiredRole::Single,
         candidates,
-        &cache_depths,
+        depths_slice,
         upstreams,
         loads,
         sticky,
@@ -188,14 +223,19 @@ fn build_disaggregated_plan(
         route_policy,
         alive.clone(),
     );
-    let prefill_cache_depths = registry
-        .cache_registry
-        .longest_prefix_lengths(&ctx.cumulative_hashes, prefill_candidates.clone());
+    let mut prefill_cache_depths =
+        CacheDepthStorage::new(registry.total_pods().min(MAX_CACHE_DEPTHS));
+    let prefill_depths_slice = prefill_cache_depths.as_mut_slice();
+    registry.cache_registry.longest_prefix_lengths_into(
+        &ctx.cumulative_hashes,
+        prefill_candidates.clone(),
+        prefill_depths_slice,
+    );
     let picked_prefill = score.best_candidate(
         ctx,
         RequiredRole::Prefill,
         prefill_candidates,
-        &prefill_cache_depths,
+        prefill_depths_slice,
         upstreams,
         loads,
         sticky,
@@ -209,14 +249,19 @@ fn build_disaggregated_plan(
 
     let decode_candidates =
         filter.candidates_for_role(upstreams, loads, RequiredRole::Decode, route_policy, alive);
-    let decode_cache_depths = registry
-        .cache_registry
-        .longest_prefix_lengths(&ctx.cumulative_hashes, decode_candidates.clone());
+    let mut decode_cache_depths =
+        CacheDepthStorage::new(registry.total_pods().min(MAX_CACHE_DEPTHS));
+    let decode_depths_slice = decode_cache_depths.as_mut_slice();
+    registry.cache_registry.longest_prefix_lengths_into(
+        &ctx.cumulative_hashes,
+        decode_candidates.clone(),
+        decode_depths_slice,
+    );
     let picked_decode = score.best_candidate(
         ctx,
         RequiredRole::Decode,
         decode_candidates,
-        &decode_cache_depths,
+        decode_depths_slice,
         upstreams,
         loads,
         sticky,
