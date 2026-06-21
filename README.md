@@ -69,14 +69,22 @@ upstreams:
           url: http://decode-2:8000
 ```
 
-## Workflow
+## Core Workflow
 
-The benchmarking suite verifies the core components of the routing pipeline under concurrent loads:
+![Routing Stages](./designs/stages.png)
 
-- **1. Storage (`HostBitmap`)**: Maps each `BlockHash` to a fixed 256-bit bitmap (`HostBitmap`). Check and intersection operations run in $O(1)$ time.
-- **2. Concurrency (Sharded Index)**: Uses 256 independent index shards to minimize lock contention. Each shard manages its own `HashMap<BlockHash, HostBitmap>` protected by an `RwLock`.
-- **3. Fibonacci Sharding**: Distributes keys using Fibonacci hashing (multiplying the hash by the golden ratio constant `0x9E3779B97F4A7C15`). This is compared against naive low-bit sharding to show distribution quality.
-- **4. Longest Prefix Query**: Given a cumulative hash chain of token blocks, searches the registry to find the longest cached prefix matching any available pod. Uses a binary search algorithm, compared against a naive $N \times P$ linear scan.
+Calinix processes each incoming request through a high-performance, 4-stage routing pipeline optimized for zero dynamic heap allocations on the critical path:
+
+1. **Prepare Stage:** Deserializes the OpenAI JSON payload and computes a FNV-1a-based **Cumulative Hash Chain** of token blocks (e.g., block size of 4 or 32) to uniquely represent the prompt's prefix context.
+2. **Filter Stage:** Isolates healthy candidate pods using $O(1)$ bitwise `AND` intersections on host bitmaps. Performs a parallel binary search on the 256-shard index to find which pods host matching prefix hashes.
+3. **Score Stage:** Computes a multi-dimensional score for each candidate pod based on:
+   * **Cache Score:** Percentage of matching prefix blocks cached in the pod.
+   * **Load Score:** Available connection capacity based on current inflight load.
+   * **Sticky Score:** Session affinity for multi-turn conversational chats.
+   * **Locality Score:** Co-locates disaggregated decoders with the selected prefill node to bypass cross-network KV cache transfers.
+4. **Pick Stage:** Selects the highest-scoring candidate (breaking ties deterministically by pod ID) and injects the routing headers (e.g., `x-calinix-target-pod-id`) to guide upstream gateway proxy forwarding.
+
+![Core Workflow](./designs/coreworkflow.png)
 
 ## Why HostBitmap
 
@@ -100,22 +108,18 @@ Consider a prompt: `"Explain cache aware routing in simple words"` with a **bloc
 
 1. **Tokenization:** `["Explain", "cache", "aware", "routing", "in", "simple", "words"]`
 2. **Block Construction & Cumulative Hash Chain:**
-   - **Block 1:** `["Explain", "cache"]` $\rightarrow$ `hash_1 = hash("Explain" + "cache")`
-   - **Block 2:** `["aware", "routing"]` $\rightarrow$ `hash_2 = hash(hash_1 + "aware" + "routing")`
-   - **Block 3:** `["in", "simple"]` $\rightarrow$ `hash_3 = hash(hash_2 + "in" + "simple")`
-   - **Block 4:** `["words"]` $\rightarrow$ `hash_4 = hash(hash_3 + "words")`
+   * **Block 1:** `["Explain", "cache"]` $\rightarrow$ `hash_1 = hash("Explain" + "cache")`
+   * **Block 2:** `["aware", "routing"]` $\rightarrow$ `hash_2 = hash(hash_1 + "aware" + "routing")`
+   * **Block 3:** `["in", "simple"]` $\rightarrow$ `hash_3 = hash(hash_2 + "in" + "simple")`
+   * **Block 4:** `["words"]` $\rightarrow$ `hash_4 = hash(hash_3 + "words")`
 
 If a subsequent request arrives with a similar prompt prefix: `"Explain cache aware routing in deep details"`:
 
-- **Block 1:** `["Explain", "cache"]` $\rightarrow$ Matches `hash_1` (Prefix match: 2 tokens)
-- **Block 2:** `["aware", "routing"]` $\rightarrow$ Matches `hash_2` (Prefix match: 4 tokens)
-- **Block 3:** `["in", "deep"]` $\rightarrow$ `hash(hash_2 + "in" + "deep")` $\neq$ `hash_3` (Mismatch!)
+* **Block 1:** `["Explain", "cache"]` $\rightarrow$ Matches `hash_1` (Prefix match: 2 tokens)
+* **Block 2:** `["aware", "routing"]` $\rightarrow$ Matches `hash_2` (Prefix match: 4 tokens)
+* **Block 3:** `["in", "deep"]` $\rightarrow$ `hash(hash_2 + "in" + "deep")` $\neq$ `hash_3` (Mismatch!)
 
 Since the hashes are cumulative, a match at `hash_2` guarantees that the *entire prefix* of 4 tokens matches exactly. The load balancer can confidently route the request to a pod caching up to `hash_2`, avoiding redundant prefill computation for the first 4 tokens.
-
-## P/D Disaggregation
-
-<img src="designs/moderl-inference.svg" alt="Architecture diagram" width="1200">
 
 ## Performance & Benchmarks
 
@@ -123,25 +127,29 @@ I've run more experiments on the benchmarks and found this configuration (`new-p
 
 ### 1. Routing Decision Latency
 
-- **1 Concurrency:** ~273 µs
+* **1 Concurrency:** ~273 µs
 
-- **12 Concurrency:** ~534 µs
-- **128 Concurrency:** ~2.45 ms (p50: 454 µs)
+* **12 Concurrency:** ~534 µs
+* **128 Concurrency:** ~2.45 ms (p50: 454 µs)
 
 ![Routing Latency](benchmark/results/new-policy-v3/policy_router_latency.png)
 
 ### 2. Lock Contention (256-shard index with 128 threads)
 
-- **Read Queries:** < 2 µs
+* **Read Queries:** < 2 µs
 
-- **Write Updates:** < 70 µs
+* **Write Updates:** < 70 µs
 
 ![Index Contention](benchmark/results/new-policy-v3/policy_index_contention.png)
 
 ### 3. Load Fairness & Cache Hits
 
-- **Jain Fairness Index:** 0.751 (vs 0.076 for cache-only)
+* **Jain Fairness Index:** 0.751 (vs 0.076 for cache-only)
 
-- **Cache Hit Rate:** ~100% (under hot prefix load)
+* **Cache Hit Rate:** ~100% (under hot prefix load)
 
 ![Cluster Fairness](benchmark/results/new-policy-v3/policy_fairness.png)
+
+## P/D Disaggregation Design
+
+<img src="designs/moderl-inference.svg" alt="Architecture diagram" width="1200">
