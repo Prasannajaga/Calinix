@@ -9,7 +9,6 @@ pub struct RoutingContext {
     pub method: String,
     pub mode: CalinixMode,
     pub openai: OpenAiRoutingView,
-    pub tokens: Vec<String>,
     pub cumulative_hashes: Vec<BlockHash>,
     pub cache_namespace: String,
     pub candidate_single: HostBitmap,

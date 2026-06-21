@@ -1,8 +1,12 @@
 target/
 teds.txt
 
-bench.md
 FLOW.md
 e2e/
-benchmark/
+benchmark/results/
+benchmark/data/
+benchmark
 *.pyc
+benchmark_focus.md
+test.png
+test.svg

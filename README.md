@@ -7,7 +7,21 @@ This is not a traditional load balancer like Nginx. It is a cache-aware load bal
 
 Calinix determines which pods are best suited for each request, handling the routing complexity so you can manage your inference logic hassle-free.
 
-## config
+## Configurations
+
+The CALinix loads this YAML configuration at startup. By default, it expects a file named `./config.yaml` in the active working directory.
+
+To use a custom configuration file, pass its path as the first command-line argument:
+
+```bash
+# Start Calinix with default ./config.yaml
+cargo run --release
+
+# Start Calinix with a specific configuration file
+cargo run --release -- /path/to/my-config.yaml
+```
+
+### Example
 
 ```yaml
 version: 1
@@ -55,20 +69,22 @@ upstreams:
           url: http://decode-2:8000
 ```
 
-## workflow
+## Core Workflow
 
-This benchmark follows Modular exactly:
+![Routing Stages](./designs/stages.png)
 
-1. Storage: HostBitmap
-   blockHash -> HostBitmap, where HostBitmap is a fixed 256-bit bitmap.
-2. Concurrency: sharded index
-   256 shards, each holding HashMap<BlockHash, HostBitmap> behind its own lock.
-3. Fibonacci hashing
-   shard = top bits of hash * 0x9E3779B97F4A7C15.
-   Compared against low-bit sharding to show distribution quality.
-4. Prefix query with binary search
-   Given a cumulative hash chain, find each pod's longest cached prefix.
-   Binary query is compared against naive N x P scanning.
+Calinix processes each incoming request through a high-performance, 4-stage routing pipeline optimized for zero dynamic heap allocations on the critical path:
+
+1. **Prepare Stage:** Deserializes the OpenAI JSON payload and computes a FNV-1a-based **Cumulative Hash Chain** of token blocks (e.g., block size of 4 or 32) to uniquely represent the prompt's prefix context.
+2. **Filter Stage:** Isolates healthy candidate pods using $O(1)$ bitwise `AND` intersections on host bitmaps. Performs a parallel binary search on the 256-shard index to find which pods host matching prefix hashes.
+3. **Score Stage:** Computes a multi-dimensional score for each candidate pod based on:
+   * **Cache Score:** Percentage of matching prefix blocks cached in the pod.
+   * **Load Score:** Available connection capacity based on current inflight load.
+   * **Sticky Score:** Session affinity for multi-turn conversational chats.
+   * **Locality Score:** Co-locates disaggregated decoders with the selected prefill node to bypass cross-network KV cache transfers.
+4. **Pick Stage:** Selects the highest-scoring candidate (breaking ties deterministically by pod ID) and injects the routing headers (e.g., `x-calinix-target-pod-id`) to guide upstream gateway proxy forwarding.
+
+![Core Workflow](./designs/coreworkflow.png)
 
 ## Why HostBitmap
 
@@ -98,12 +114,42 @@ Consider a prompt: `"Explain cache aware routing in simple words"` with a **bloc
    * **Block 4:** `["words"]` $\rightarrow$ `hash_4 = hash(hash_3 + "words")`
 
 If a subsequent request arrives with a similar prompt prefix: `"Explain cache aware routing in deep details"`:
+
 * **Block 1:** `["Explain", "cache"]` $\rightarrow$ Matches `hash_1` (Prefix match: 2 tokens)
 * **Block 2:** `["aware", "routing"]` $\rightarrow$ Matches `hash_2` (Prefix match: 4 tokens)
 * **Block 3:** `["in", "deep"]` $\rightarrow$ `hash(hash_2 + "in" + "deep")` $\neq$ `hash_3` (Mismatch!)
 
 Since the hashes are cumulative, a match at `hash_2` guarantees that the *entire prefix* of 4 tokens matches exactly. The load balancer can confidently route the request to a pod caching up to `hash_2`, avoiding redundant prefill computation for the first 4 tokens.
 
-## P/D Disaggregation
+## Performance & Benchmarks
 
-<img src="moderl-inference.svg" alt="Architecture diagram" width="1200">
+I've run more experiments on the benchmarks and found this configuration (`new-policy-v3`) is the best. To see more detailed benchmark results and the step-by-step optimization journey, see [bench.md](./bench.md).
+
+### 1. Routing Decision Latency
+
+* **1 Concurrency:** ~273 µs
+
+* **12 Concurrency:** ~534 µs
+* **128 Concurrency:** ~2.45 ms (p50: 454 µs)
+
+![Routing Latency](benchmark/results/new-policy-v3/policy_router_latency.png)
+
+### 2. Lock Contention (256-shard index with 128 threads)
+
+* **Read Queries:** < 2 µs
+
+* **Write Updates:** < 70 µs
+
+![Index Contention](benchmark/results/new-policy-v3/policy_index_contention.png)
+
+### 3. Load Fairness & Cache Hits
+
+* **Jain Fairness Index:** 0.751 (vs 0.076 for cache-only)
+
+* **Cache Hit Rate:** ~100% (under hot prefix load)
+
+![Cluster Fairness](benchmark/results/new-policy-v3/policy_fairness.png)
+
+## P/D Disaggregation Design
+
+<img src="designs/moderl-inference.svg" alt="Architecture diagram" width="1200">

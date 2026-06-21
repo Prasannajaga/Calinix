@@ -1,8 +1,12 @@
+use std::mem::MaybeUninit;
+
 use super::block_hash::BlockHash;
 use super::host_bitmap::HostBitmap;
 use super::sharded_index::ShardedBlockIndexer;
 
-#[derive(Clone, Debug)]
+const INLINE_SEARCH_FRAMES: usize = 32;
+
+#[derive(Clone, Copy, Debug)]
 pub struct SearchFrame {
     min_prefix_depth: usize,
     max_prefix_depth: usize,
@@ -23,20 +27,69 @@ pub struct PrefixMatch {
     pub prefix_depth: usize,
 }
 
+struct SearchStack {
+    frames: [MaybeUninit<SearchFrame>; INLINE_SEARCH_FRAMES],
+    len: usize,
+    heap: Option<Vec<SearchFrame>>,
+}
+
+impl SearchStack {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            frames: [const { MaybeUninit::uninit() }; INLINE_SEARCH_FRAMES],
+            len: 0,
+            heap: None,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, frame: SearchFrame) {
+        if let Some(heap) = &mut self.heap {
+            heap.push(frame);
+        } else if self.len < INLINE_SEARCH_FRAMES {
+            self.frames[self.len].write(frame);
+            self.len += 1;
+        } else {
+            self.spill_to_heap(frame);
+        }
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<SearchFrame> {
+        if let Some(heap) = &mut self.heap {
+            return heap.pop();
+        }
+
+        if self.len > 0 {
+            self.len -= 1;
+            Some(unsafe { self.frames[self.len].assume_init_read() })
+        } else {
+            None
+        }
+    }
+
+    fn spill_to_heap(&mut self, frame: SearchFrame) {
+        let mut heap = Vec::with_capacity(INLINE_SEARCH_FRAMES * 2);
+        for index in 0..self.len {
+            heap.push(unsafe { self.frames[index].assume_init_read() });
+        }
+        self.len = 0;
+        heap.push(frame);
+        self.heap = Some(heap);
+    }
+}
+
 pub fn longest_prefix_lengths_for_candidates(
     indexer: &ShardedBlockIndexer,
     cumulative_hashes: &[BlockHash],
     candidate_pods: HostBitmap,
 ) -> Vec<usize> {
-    let mut lengths = vec![0; result_len(indexer, &candidate_pods)];
-    let mut stack = Vec::with_capacity(cumulative_hashes.len().saturating_add(1));
-    longest_prefix_lengths_into(
-        indexer,
-        cumulative_hashes,
-        candidate_pods,
-        &mut lengths,
-        &mut stack,
-    );
+    let result_size = indexer
+        .pod_count()
+        .max(candidate_pods.highest_set_bit_plus_one());
+    let mut lengths = vec![0; result_size];
+    longest_prefix_lengths_into(indexer, cumulative_hashes, candidate_pods, &mut lengths);
     lengths
 }
 
@@ -45,27 +98,28 @@ pub fn longest_prefix_lengths_into(
     cumulative_hashes: &[BlockHash],
     candidate_pods: HostBitmap,
     lengths: &mut [usize],
-    stack: &mut Vec<SearchFrame>,
 ) {
     lengths.fill(0);
-    stack.clear();
     let alive = indexer.alive();
+    let alive_candidates = candidate_pods.and(&alive);
+    if cumulative_hashes.is_empty() || alive_candidates.is_empty() {
+        return;
+    }
+
+    let mut stack = SearchStack::new();
     stack.push(SearchFrame {
         min_prefix_depth: 0,
         max_prefix_depth: cumulative_hashes.len(),
-        candidate_pods: candidate_pods.and(&alive),
+        candidate_pods: alive_candidates,
     });
 
     while let Some(frame) = stack.pop() {
-        if frame.candidate_pods.is_empty() {
-            continue;
-        }
         if frame.min_prefix_depth == frame.max_prefix_depth {
-            for pod_id in frame.candidate_pods.iter_set_bits() {
+            frame.candidate_pods.for_each_set_bit(|pod_id| {
                 if pod_id < lengths.len() {
                     lengths[pod_id] = frame.min_prefix_depth;
                 }
-            }
+            });
             continue;
         }
 
@@ -76,16 +130,20 @@ pub fn longest_prefix_lengths_into(
         let pods_at_or_above_probe = frame.candidate_pods.and(&pods_with_probe_prefix);
         let pods_below_probe = frame.candidate_pods.minus(&pods_at_or_above_probe);
 
-        stack.push(SearchFrame {
-            min_prefix_depth: probe_prefix_depth,
-            max_prefix_depth: frame.max_prefix_depth,
-            candidate_pods: pods_at_or_above_probe,
-        });
-        stack.push(SearchFrame {
-            min_prefix_depth: frame.min_prefix_depth,
-            max_prefix_depth: probe_prefix_depth - 1,
-            candidate_pods: pods_below_probe,
-        });
+        if !pods_at_or_above_probe.is_empty() {
+            stack.push(SearchFrame {
+                min_prefix_depth: probe_prefix_depth,
+                max_prefix_depth: frame.max_prefix_depth,
+                candidate_pods: pods_at_or_above_probe,
+            });
+        }
+        if !pods_below_probe.is_empty() {
+            stack.push(SearchFrame {
+                min_prefix_depth: frame.min_prefix_depth,
+                max_prefix_depth: probe_prefix_depth - 1,
+                candidate_pods: pods_below_probe,
+            });
+        }
     }
 }
 
@@ -112,7 +170,7 @@ pub fn best_prefix_match_for_candidates(
         pod_id: fallback_pod,
         prefix_depth: 0,
     };
-    let mut stack = Vec::with_capacity(cumulative_hashes.len().saturating_add(1));
+    let mut stack = SearchStack::new();
     stack.push(SearchFrame {
         min_prefix_depth: 0,
         max_prefix_depth: full_prefix_depth,
@@ -154,16 +212,20 @@ pub fn best_prefix_match_for_candidates(
 
         let pods_below_probe = frame.candidate_pods.minus(&pods_at_or_above_probe);
 
-        stack.push(SearchFrame {
-            min_prefix_depth: frame.min_prefix_depth,
-            max_prefix_depth: probe_prefix_depth - 1,
-            candidate_pods: pods_below_probe,
-        });
-        stack.push(SearchFrame {
-            min_prefix_depth: probe_prefix_depth,
-            max_prefix_depth: frame.max_prefix_depth,
-            candidate_pods: pods_at_or_above_probe,
-        });
+        if !pods_below_probe.is_empty() {
+            stack.push(SearchFrame {
+                min_prefix_depth: frame.min_prefix_depth,
+                max_prefix_depth: probe_prefix_depth - 1,
+                candidate_pods: pods_below_probe,
+            });
+        }
+        if !pods_at_or_above_probe.is_empty() {
+            stack.push(SearchFrame {
+                min_prefix_depth: probe_prefix_depth,
+                max_prefix_depth: frame.max_prefix_depth,
+                candidate_pods: pods_at_or_above_probe,
+            });
+        }
     }
 
     Some(best)
@@ -174,26 +236,39 @@ pub fn longest_prefix_lengths_debug(
     cumulative_hashes: &[BlockHash],
     candidate_pods: HostBitmap,
 ) -> PrefixMatchDebug {
-    let mut lengths = vec![0; result_len(indexer, &candidate_pods)];
+    let result_size = indexer
+        .pod_count()
+        .max(candidate_pods.highest_set_bit_plus_one());
+    let mut lengths = vec![0; result_size];
     let mut frames_processed = 0;
     let mut shard_lookups = 0;
     let mut bitmap_intersections = 1;
     let alive = indexer.alive();
-    let mut stack = vec![SearchFrame {
+    let alive_candidates = candidate_pods.and(&alive);
+    if cumulative_hashes.is_empty() || alive_candidates.is_empty() {
+        return PrefixMatchDebug {
+            lengths,
+            frames_processed,
+            shard_lookups,
+            bitmap_intersections,
+        };
+    }
+
+    let mut stack = SearchStack::new();
+    stack.push(SearchFrame {
         min_prefix_depth: 0,
         max_prefix_depth: cumulative_hashes.len(),
-        candidate_pods: candidate_pods.and(&alive),
-    }];
+        candidate_pods: alive_candidates,
+    });
 
     while let Some(frame) = stack.pop() {
         frames_processed += 1;
-        if frame.candidate_pods.is_empty() {
-            continue;
-        }
         if frame.min_prefix_depth == frame.max_prefix_depth {
-            for pod_id in frame.candidate_pods.iter_set_bits() {
-                lengths[pod_id] = frame.min_prefix_depth;
-            }
+            frame.candidate_pods.for_each_set_bit(|pod_id| {
+                if pod_id < lengths.len() {
+                    lengths[pod_id] = frame.min_prefix_depth;
+                }
+            });
             continue;
         }
 
@@ -206,16 +281,20 @@ pub fn longest_prefix_lengths_debug(
         let pods_below_probe = frame.candidate_pods.minus(&pods_at_or_above_probe);
         bitmap_intersections += 2;
 
-        stack.push(SearchFrame {
-            min_prefix_depth: probe_prefix_depth,
-            max_prefix_depth: frame.max_prefix_depth,
-            candidate_pods: pods_at_or_above_probe,
-        });
-        stack.push(SearchFrame {
-            min_prefix_depth: frame.min_prefix_depth,
-            max_prefix_depth: probe_prefix_depth - 1,
-            candidate_pods: pods_below_probe,
-        });
+        if !pods_at_or_above_probe.is_empty() {
+            stack.push(SearchFrame {
+                min_prefix_depth: probe_prefix_depth,
+                max_prefix_depth: frame.max_prefix_depth,
+                candidate_pods: pods_at_or_above_probe,
+            });
+        }
+        if !pods_below_probe.is_empty() {
+            stack.push(SearchFrame {
+                min_prefix_depth: frame.min_prefix_depth,
+                max_prefix_depth: probe_prefix_depth - 1,
+                candidate_pods: pods_below_probe,
+            });
+        }
     }
 
     PrefixMatchDebug {
@@ -224,12 +303,6 @@ pub fn longest_prefix_lengths_debug(
         shard_lookups,
         bitmap_intersections,
     }
-}
-
-fn result_len(indexer: &ShardedBlockIndexer, candidate_pods: &HostBitmap) -> usize {
-    indexer
-        .pod_count()
-        .max(candidate_pods.highest_set_bit_plus_one())
 }
 
 #[cfg(test)]

@@ -18,7 +18,8 @@ pub use block_hash::{
 pub use cleanup::{cleanup_dead_pod, cleanup_not_alive, CleanupReport};
 pub use cumulative_hash::{
     combine_cumulative, cumulative_hashes_from_blocks, make_synthetic_chain,
-    prompt_to_cumulative_hashes, prompt_to_cumulative_hashes_with_block_size,
+    prompt_to_cumulative_hashes, prompt_to_cumulative_hashes_streaming,
+    prompt_to_cumulative_hashes_with_block_size,
 };
 pub use events::{apply_event, CacheEvent};
 pub use fibonacci::{
@@ -118,6 +119,20 @@ impl CacheRegistry {
         candidate_pods: HostBitmap,
     ) -> Vec<usize> {
         longest_prefix_lengths_for_candidates(&self.block_index, cumulative_hashes, candidate_pods)
+    }
+
+    pub fn longest_prefix_lengths_into(
+        &self,
+        cumulative_hashes: &[BlockHash],
+        candidate_pods: HostBitmap,
+        lengths: &mut [usize],
+    ) {
+        longest_prefix_lengths_into(
+            &self.block_index,
+            cumulative_hashes,
+            candidate_pods,
+            lengths,
+        );
     }
 
     pub fn best_prefix_match(

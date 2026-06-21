@@ -1,80 +1,79 @@
+pub const MAX_PODS: usize = 256;
+const WORDS: usize = 4;
 const BITS_PER_WORD: usize = 64;
 
 pub type PodId = usize;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostBitmap {
-    words: Vec<u64>,
+    words: [u64; WORDS],
 }
 
 impl HostBitmap {
     pub const fn empty() -> Self {
-        Self { words: Vec::new() }
+        Self { words: [0; WORDS] }
     }
 
     pub fn full_for_count(count: usize) -> Self {
-        let mut bitmap = Self::with_bit_capacity(count);
-        for pod_id in 0..count {
-            bitmap.set(pod_id);
+        let mut bitmap = Self::empty();
+        let capped = count.min(MAX_PODS);
+        let full_words = capped / BITS_PER_WORD;
+        for i in 0..full_words {
+            bitmap.words[i] = u64::MAX;
+        }
+        let remaining = capped % BITS_PER_WORD;
+        if remaining > 0 && full_words < WORDS {
+            bitmap.words[full_words] = (1_u64 << remaining) - 1;
         }
         bitmap
     }
 
-    pub fn with_bit_capacity(bits: usize) -> Self {
-        Self {
-            words: vec![0; words_for_bits(bits)],
-        }
-    }
-
-    pub fn from_words(words: Vec<u64>) -> Self {
-        Self { words }
-    }
-
-    pub fn words(&self) -> &[u64] {
+    pub fn words(&self) -> &[u64; WORDS] {
         &self.words
     }
 
-    pub fn bit_capacity(&self) -> usize {
-        self.words.len() * BITS_PER_WORD
-    }
-
     pub fn highest_set_bit_plus_one(&self) -> usize {
-        for (word_index, word) in self.words.iter().enumerate().rev() {
-            if *word != 0 {
-                let highest_bit = BITS_PER_WORD - 1 - word.leading_zeros() as usize;
-                return word_index * BITS_PER_WORD + highest_bit + 1;
+        let mut i = WORDS;
+        while i > 0 {
+            i -= 1;
+            if self.words[i] != 0 {
+                let highest_bit = BITS_PER_WORD - 1 - self.words[i].leading_zeros() as usize;
+                return i * BITS_PER_WORD + highest_bit + 1;
             }
         }
         0
     }
 
     pub fn set(&mut self, pod_id: usize) {
-        self.ensure_bit(pod_id);
+        if pod_id >= MAX_PODS {
+            return;
+        }
         self.words[pod_id / BITS_PER_WORD] |= 1_u64 << (pod_id % BITS_PER_WORD);
     }
 
     pub fn clear(&mut self, pod_id: usize) {
-        let Some(word) = self.words.get_mut(pod_id / BITS_PER_WORD) else {
+        if pod_id >= MAX_PODS {
             return;
-        };
-        *word &= !(1_u64 << (pod_id % BITS_PER_WORD));
+        }
+        self.words[pod_id / BITS_PER_WORD] &= !(1_u64 << (pod_id % BITS_PER_WORD));
     }
 
     pub fn contains(&self, pod_id: usize) -> bool {
-        self.words
-            .get(pod_id / BITS_PER_WORD)
-            .is_some_and(|word| (word & (1_u64 << (pod_id % BITS_PER_WORD))) != 0)
+        if pod_id >= MAX_PODS {
+            return false;
+        }
+        (self.words[pod_id / BITS_PER_WORD] & (1_u64 << (pod_id % BITS_PER_WORD))) != 0
     }
 
     pub fn is_empty(&self) -> bool {
-        self.words.iter().all(|word| *word == 0)
+        self.words[0] == 0 && self.words[1] == 0 && self.words[2] == 0 && self.words[3] == 0
     }
 
     pub fn count_ones(&self) -> usize {
-        self.words
-            .iter()
-            .map(|word| word.count_ones() as usize)
-            .sum()
+        self.words[0].count_ones() as usize
+            + self.words[1].count_ones() as usize
+            + self.words[2].count_ones() as usize
+            + self.words[3].count_ones() as usize
     }
 
     pub fn count(&self) -> usize {
@@ -91,28 +90,36 @@ impl HostBitmap {
     }
 
     pub fn and(&self, other: &Self) -> Self {
-        let mut words = vec![0; self.words.len().min(other.words.len())];
-        for (index, word) in words.iter_mut().enumerate() {
-            *word = self.words[index] & other.words[index];
+        Self {
+            words: [
+                self.words[0] & other.words[0],
+                self.words[1] & other.words[1],
+                self.words[2] & other.words[2],
+                self.words[3] & other.words[3],
+            ],
         }
-        Self { words }
     }
 
     pub fn or(&self, other: &Self) -> Self {
-        let mut words = vec![0; self.words.len().max(other.words.len())];
-        for (index, word) in words.iter_mut().enumerate() {
-            *word = self.words.get(index).copied().unwrap_or(0)
-                | other.words.get(index).copied().unwrap_or(0);
+        Self {
+            words: [
+                self.words[0] | other.words[0],
+                self.words[1] | other.words[1],
+                self.words[2] | other.words[2],
+                self.words[3] | other.words[3],
+            ],
         }
-        Self { words }
     }
 
     pub fn minus(&self, other: &Self) -> Self {
-        let mut words = vec![0; self.words.len()];
-        for (index, word) in words.iter_mut().enumerate() {
-            *word = self.words[index] & !other.words.get(index).copied().unwrap_or(0);
+        Self {
+            words: [
+                self.words[0] & !other.words[0],
+                self.words[1] & !other.words[1],
+                self.words[2] & !other.words[2],
+                self.words[3] & !other.words[3],
+            ],
         }
-        Self { words }
     }
 
     pub fn iter_set_bits(&self) -> Vec<usize> {
@@ -131,13 +138,6 @@ impl HostBitmap {
             }
         }
     }
-
-    fn ensure_bit(&mut self, pod_id: usize) {
-        let needed = words_for_bits(pod_id + 1);
-        if self.words.len() < needed {
-            self.words.resize(needed, 0);
-        }
-    }
 }
 
 impl Default for HostBitmap {
@@ -146,16 +146,12 @@ impl Default for HostBitmap {
     }
 }
 
-fn words_for_bits(bits: usize) -> usize {
-    bits.saturating_add(BITS_PER_WORD - 1) / BITS_PER_WORD
-}
-
 #[cfg(test)]
 mod tests {
     use super::HostBitmap;
 
     #[test]
-    fn bitmap_intersections_work_across_dynamic_words() {
+    fn bitmap_intersections_work_across_words() {
         let mut a = HostBitmap::empty();
         a.set(0);
         a.set(65);
@@ -174,5 +170,36 @@ mod tests {
 
         a.clear(65);
         assert_eq!(a.iter_set_bits(), vec![0, 255]);
+    }
+
+    #[test]
+    fn full_for_count_sets_correct_bits() {
+        let bm = HostBitmap::full_for_count(3);
+        assert_eq!(bm.iter_set_bits(), vec![0, 1, 2]);
+        assert_eq!(bm.count_ones(), 3);
+
+        let bm = HostBitmap::full_for_count(64);
+        assert_eq!(bm.count_ones(), 64);
+        assert!(bm.contains(63));
+        assert!(!bm.contains(64));
+
+        let bm = HostBitmap::full_for_count(256);
+        assert_eq!(bm.count_ones(), 256);
+        assert!(bm.contains(255));
+    }
+
+    #[test]
+    fn out_of_bounds_pod_is_silently_ignored() {
+        let mut bm = HostBitmap::empty();
+        bm.set(300);
+        assert!(bm.is_empty());
+        assert!(!bm.contains(300));
+    }
+
+    #[test]
+    fn bitmap_is_copy() {
+        let a = HostBitmap::full_for_count(8);
+        let b = a;
+        assert_eq!(a, b);
     }
 }

@@ -30,3 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [[bin]]
 name = "calinix-url-bench"
 path = "benchmark/calinix-url-bench.rs"
+
+[[bin]]
+name = "calinix-policy-bench"
+path = "benchmark/calinix-policy-bench.rs"
