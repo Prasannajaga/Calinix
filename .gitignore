@@ -8,3 +8,5 @@ benchmark/data/
 benchmark/
 *.pyc
 benchmark_focus.md
+test.png
+test.svg
