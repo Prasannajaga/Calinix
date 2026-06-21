@@ -1,0 +1,253 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running `target/debug/calinix-url-bench --name sweep-mixed --url 'http://127.0.0.1:18080/v1/chat/completions' --threads 4 --payload file benchmark/data/mixed_payloads.json --block-size 32 --concurrency-sweep 1,20,40,80,160 --output url_bench_sweep.csv --requests 10000 --mode single`
+CALINIX URL BENCH
+--------------------------------------------------
+name=sweep-mixed
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=1
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=47.867
+latency_success_samples=10000
+avg_latency_ms=5.498
+p50_latency_ms=4
+p95_latency_ms=14
+p99_latency_ms=17
+max_latency_ms=21
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=10000
+cache_miss_count=0
+cache_samples=10000
+token_weighted_prefix_hit_rate=1.000000
+request_avg_prefix_hit_rate=1.000000
+matched_prefix_depth_avg=7235.985000
+matched_prefix_depth_p95=1252
+avoided_prefill_tokens=289668965
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=10000
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/sweep-mixed/url_bench_sweep.csv
+CALINIX URL BENCH
+--------------------------------------------------
+name=sweep-mixed
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=20
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=232.173
+latency_success_samples=10000
+avg_latency_ms=68.976
+p50_latency_ms=74
+p95_latency_ms=132
+p99_latency_ms=158
+max_latency_ms=310
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=10000
+cache_miss_count=0
+cache_samples=10000
+token_weighted_prefix_hit_rate=1.000000
+request_avg_prefix_hit_rate=1.000000
+matched_prefix_depth_avg=7241.992000
+matched_prefix_depth_p95=1252
+avoided_prefill_tokens=289668965
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=9969
+  pod_id=1 count=18
+  pod_id=2 count=13
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/sweep-mixed/url_bench_sweep.csv
+CALINIX URL BENCH
+--------------------------------------------------
+name=sweep-mixed
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=40
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=230.963
+latency_success_samples=10000
+avg_latency_ms=155.608
+p50_latency_ms=148
+p95_latency_ms=280
+p99_latency_ms=369
+max_latency_ms=827
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=10000
+cache_miss_count=0
+cache_samples=10000
+token_weighted_prefix_hit_rate=1.000000
+request_avg_prefix_hit_rate=1.000000
+matched_prefix_depth_avg=7241.992000
+matched_prefix_depth_p95=1252
+avoided_prefill_tokens=289668965
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=9977
+  pod_id=1 count=9
+  pod_id=2 count=13
+  pod_id=3 count=1
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/sweep-mixed/url_bench_sweep.csv
+CALINIX URL BENCH
+--------------------------------------------------
+name=sweep-mixed
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=80
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=233.776
+latency_success_samples=10000
+avg_latency_ms=323.793
+p50_latency_ms=302
+p95_latency_ms=604
+p99_latency_ms=827
+max_latency_ms=2420
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=10000
+cache_miss_count=0
+cache_samples=10000
+token_weighted_prefix_hit_rate=1.000000
+request_avg_prefix_hit_rate=1.000000
+matched_prefix_depth_avg=7241.992000
+matched_prefix_depth_p95=1252
+avoided_prefill_tokens=289668965
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=9957
+  pod_id=1 count=16
+  pod_id=2 count=13
+  pod_id=3 count=7
+  pod_id=4 count=7
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/sweep-mixed/url_bench_sweep.csv
+CALINIX URL BENCH
+--------------------------------------------------
+name=sweep-mixed
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=160
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=182.997
+latency_success_samples=10000
+avg_latency_ms=675.423
+p50_latency_ms=556
+p95_latency_ms=1612
+p99_latency_ms=2390
+max_latency_ms=47136
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=10000
+cache_miss_count=0
+cache_samples=10000
+token_weighted_prefix_hit_rate=1.000000
+request_avg_prefix_hit_rate=1.000000
+matched_prefix_depth_avg=7241.991700
+matched_prefix_depth_p95=1252
+avoided_prefill_tokens=289668965
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=9809
+  pod_id=1 count=82
+  pod_id=2 count=64
+  pod_id=3 count=18
+  pod_id=4 count=27
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/sweep-mixed/url_bench_sweep.csv
+csv=benchmark/results/sweep-mixed/url_bench_sweep.csv
+Generating sweep plots for 5 concurrency levels → benchmark/results/sweep-mixed
+Done — 7 sweep plots saved to benchmark/results/sweep-mixed/

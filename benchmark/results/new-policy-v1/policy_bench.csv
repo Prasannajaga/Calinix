@@ -1,0 +1,27 @@
+scenario,concurrency,lag_ms,operations,elapsed_ms,rps,latency_count,avg_us,p50_us,p95_us,p99_us,max_us,write_latency_count,write_avg_us,write_p99_us,jain_fairness,misroute_rate,cache_gap_avg_blocks,notes
+decision_latency,1,0,1000,329,3037.274,1000,271.738,268,290,306,814,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,1,0,1000,2,413057.064,1000,0.926,1,2,2,10,250,7.596,24,,,,write_ops=250; writer_threads=1
+hotspot_fairness,1,0,1000,382,2613.277,1000,271.318,269,289,297,325,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+decision_latency,4,0,1000,86,11535.723,1000,284.129,269,308,625,707,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,4,0,1000,1,530963.960,1000,1.211,1,3,4,12,250,6.140,21,,,,write_ops=250; writer_threads=1
+hotspot_fairness,4,0,1000,388,2576.264,1000,276.182,273,296,310,382,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+decision_latency,8,0,1000,60,16461.262,1000,384.096,277,616,664,686,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,8,0,1000,3,321577.841,1000,1.579,1,3,5,8,250,20.848,39,,,,write_ops=250; writer_threads=2
+hotspot_fairness,8,0,1000,385,2594.640,1000,273.066,269,294,310,344,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+decision_latency,12,0,1000,52,18935.341,1000,493.212,445,608,694,2435,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,12,0,1000,4,231784.948,1000,1.751,2,3,4,8,250,42.196,1611,,,,write_ops=250; writer_threads=3
+hotspot_fairness,12,0,1000,385,2595.042,1000,273.034,270,291,306,351,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+decision_latency,32,0,1000,53,18759.440,1000,1154.767,449,6441,9609,16432,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,32,0,1000,2,402857.711,1000,1.288,1,3,4,5,250,28.336,49,,,,write_ops=250; writer_threads=8
+hotspot_fairness,32,0,1000,380,2625.158,1000,270.301,268,287,300,312,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+decision_latency,64,0,1000,54,18379.002,1000,1334.495,451,6610,12442,15628,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,64,0,1000,2,346100.400,1000,1.779,2,3,5,9,250,53.208,265,,,,write_ops=250; writer_threads=16
+hotspot_fairness,64,0,1000,386,2584.904,1000,272.652,269,291,307,346,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+decision_latency,128,0,1000,54,18226.650,1000,1100.115,450,3608,15604,18483,0,0.000,0,0.076418,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,128,0,1000,4,222046.362,1000,1.903,2,4,7,14,250,45.348,744,,,,write_ops=250; writer_threads=32
+hotspot_fairness,128,0,1000,382,2615.193,1000,271.317,268,289,302,385,0,0.000,0,0.751744,,,route_errors=0; load_distribution=0:121|1:113|2:105|3:98|4:90|5:82|6:74|7:66|8:59|9:51|10:43|11:35|12:27|13:20|14:12|15:4
+staleness_sensitivity,128,0,1000,894,1118.309,1000,270.227,267,288,303,327,0,0.000,0,0.062625,0.001000,0.127000,qps=1000; pending_events_after_run=1
+staleness_sensitivity,128,100,1000,889,1123.714,1000,270.122,267,287,302,309,0,0.000,0,0.076220,0.100000,12.799000,qps=1000; pending_events_after_run=100
+staleness_sensitivity,128,500,1000,887,1126.187,1000,271.259,269,289,297,308,0,0.000,0,0.125000,0.500000,63.999000,qps=1000; pending_events_after_run=500
+staleness_sensitivity,128,1000,1000,887,1127.284,1000,272.381,270,291,304,382,0,0.000,0,0.062500,1.000000,127.999000,qps=1000; pending_events_after_run=1000
+staleness_sensitivity,128,5000,1000,888,1125.835,1000,273.584,269,291,305,1870,0,0.000,0,0.062500,1.000000,127.999000,qps=1000; pending_events_after_run=1000
