@@ -115,4 +115,33 @@ Since the hashes are cumulative, a match at `hash_2` guarantees that the *entire
 
 ## P/D Disaggregation
 
-<img src="moderl-inference.svg" alt="Architecture diagram" width="1200">
+<img src="designs/moderl-inference.svg" alt="Architecture diagram" width="1200">
+
+## Performance & Benchmarks
+
+I've run more experiments on the benchmarks and found this configuration (`new-policy-v3`) is the best. To see more detailed benchmark results and the step-by-step optimization journey, see [bench.md](./bench.md).
+
+### 1. Routing Decision Latency
+
+- **1 Concurrency:** ~273 µs
+
+- **12 Concurrency:** ~534 µs
+- **128 Concurrency:** ~2.45 ms (p50: 454 µs)
+
+![Routing Latency](benchmark/results/new-policy-v3/policy_router_latency.png)
+
+### 2. Lock Contention (256-shard index with 128 threads)
+
+- **Read Queries:** < 2 µs
+
+- **Write Updates:** < 70 µs
+
+![Index Contention](benchmark/results/new-policy-v3/policy_index_contention.png)
+
+### 3. Load Fairness & Cache Hits
+
+- **Jain Fairness Index:** 0.751 (vs 0.076 for cache-only)
+
+- **Cache Hit Rate:** ~100% (under hot prefix load)
+
+![Cluster Fairness](benchmark/results/new-policy-v3/policy_fairness.png)

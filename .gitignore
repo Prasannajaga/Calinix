@@ -5,7 +5,7 @@ FLOW.md
 e2e/
 benchmark/results/
 benchmark/data/
-benchmark/
+benchmark
 *.pyc
 benchmark_focus.md
 test.png
