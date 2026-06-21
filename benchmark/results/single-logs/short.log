@@ -1,0 +1,55 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running `target/debug/calinix-url-bench --name single-short --url 'http://127.0.0.1:18080/v1/chat/completions' --threads 4 --payload file benchmark/data/short_payloads.json --block-size 32 --concurrency 100 --output url_bench.csv --requests 10000 --mode single`
+CALINIX URL BENCH
+--------------------------------------------------
+name=single-short
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=100
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=1101.282
+latency_success_samples=10000
+avg_latency_ms=86.703
+p50_latency_ms=84
+p95_latency_ms=151
+p99_latency_ms=187
+max_latency_ms=357
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=9939
+cache_miss_count=61
+cache_samples=10000
+token_weighted_prefix_hit_rate=0.994476
+request_avg_prefix_hit_rate=0.993720
+matched_prefix_depth_avg=1175.602400
+matched_prefix_depth_p95=4
+avoided_prefill_tokens=47082868
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=3118
+  pod_id=1 count=1317
+  pod_id=2 count=2275
+  pod_id=3 count=1835
+  pod_id=4 count=1455
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/single-short/url_bench.csv
+Generating plots for 10000 requests → benchmark/results/single-short
+Done — 7 plots saved to benchmark/results/single-short/

@@ -1,0 +1,5 @@
+scenario,concurrency,lag_ms,operations,elapsed_ms,rps,latency_count,avg_us,p50_us,p95_us,p99_us,max_us,write_latency_count,write_avg_us,write_p99_us,jain_fairness,misroute_rate,cache_gap_avg_blocks,notes
+decision_latency,1,0,1,0,1000.000,1,28.000,28,28,28,28,0,0.000,0,0.062500,,,route_errors=0; includes parse/tokenize/hash/index/score
+index_contention,1,0,1,0,1000.000,1,1.000,1,1,1,1,1,1.000,1,,,,write_ops=1; writer_threads=1
+hotspot_fairness,1,0,1,0,1000.000,1,19.000,19,19,19,19,0,0.000,0,0.062500,,,route_errors=0; load_distribution=0:1
+staleness_sensitivity,1,0,1,0,1000.000,1,15.000,15,15,15,15,0,0.000,0,0.062500,0.000000,0.000000,qps=1000; pending_events_after_run=1

@@ -1,0 +1,6 @@
+concurrency,total_requests,success_count,error_count,timeout_count,rps,avg_latency_ms,p50_latency_ms,p95_latency_ms,p99_latency_ms,max_latency_ms,status_2xx,status_4xx,status_5xx,cache_hit_count,cache_miss_count,cache_samples,total_prompt_tokens,matched_prefix_tokens,token_weighted_prefix_hit_rate,request_avg_prefix_hit_rate,matched_prefix_depth_avg,matched_prefix_depth_p95,best_gap_samples,best_possible_prefix_tokens,cache_gap_tokens,avg_cache_gap_tokens,avg_cache_gap_rate,misroute_samples,misroute_rate
+1,10000,10000,0,0,158.450,2.717,3,4,5,11,10000,0,0,9992,8,10000,47344387,47341291,0.999935,0.999200,1183.114600,4,0,0,0,,,0,
+20,10000,10000,0,0,810.887,20.408,20,31,37,58,10000,0,0,10000,0,10000,47344387,47344387,1.000000,1.000000,1183.877000,4,0,0,0,,,0,
+40,10000,10000,0,0,798.661,45.588,43,63,102,461,10000,0,0,10000,0,10000,47344387,47344387,1.000000,1.000000,1183.877000,4,0,0,0,,,0,
+80,10000,7416,2584,0,686.032,109.426,88,312,610,757,7416,0,2584,7416,0,10000,47344387,35089123,0.741146,0.741600,877.426200,0,0,0,0,,,0,
+160,10000,9693,307,0,775.830,197.985,156,644,794,1142,9693,0,307,9610,83,10000,47344387,45587222,0.962885,0.960959,1139.563400,4,0,0,0,,,0,

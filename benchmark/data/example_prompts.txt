@@ -1,0 +1,8 @@
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: How do I write a binary search in Rust?
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: Explain ownership and borrowing in Rust.
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: What is the difference between String and &str?
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: How does async/await work in Rust?
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: Implement a simple HTTP server in Rust using Hyper.
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: How do I implement the Iterator trait in Rust?
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: Explain lifetime annotations with a simple example.
+System instructions: You are a helpful assistant. Act as a coding tutor. Question: How does concurrency work with Arc and Mutex?

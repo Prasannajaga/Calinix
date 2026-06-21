@@ -1,0 +1,55 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running `target/debug/calinix-url-bench --name single-huge --url 'http://127.0.0.1:18080/v1/chat/completions' --threads 4 --payload file benchmark/data/huge_payloads.json --block-size 32 --concurrency 100 --output url_bench.csv --requests 10000 --mode single`
+CALINIX URL BENCH
+--------------------------------------------------
+name=single-huge
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=100
+
+success_count=8000
+error_count=2000
+timeout_count=0
+
+rps=30.725
+latency_success_samples=8000
+avg_latency_ms=2547.978
+p50_latency_ms=1164
+p95_latency_ms=4331
+p99_latency_ms=9374
+max_latency_ms=300831
+
+status_2xx=8000
+status_4xx=2000
+status_5xx=0
+
+cache_hit_count=7974
+cache_miss_count=26
+cache_samples=10000
+token_weighted_prefix_hit_rate=0.431128
+request_avg_prefix_hit_rate=0.797400
+matched_prefix_depth_avg=18871.897300
+matched_prefix_depth_p95=0
+avoided_prefill_tokens=758813818
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=2342
+  pod_id=1 count=1606
+  pod_id=2 count=1454
+  pod_id=3 count=1151
+  pod_id=4 count=1447
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/single-huge/url_bench.csv
+Generating plots for 10000 requests → benchmark/results/single-huge
+Done — 7 plots saved to benchmark/results/single-huge/

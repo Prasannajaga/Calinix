@@ -1,0 +1,55 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running `target/debug/calinix-url-bench --name single-mixed --url 'http://127.0.0.1:18080/v1/chat/completions' --threads 4 --payload file benchmark/data/mixed_payloads.json --block-size 32 --concurrency 100 --output url_bench.csv --requests 10000 --mode single`
+CALINIX URL BENCH
+--------------------------------------------------
+name=single-mixed
+url=http://127.0.0.1:18080/v1/chat/completions
+requests=10000
+request_limit=10000
+concurrency=100
+
+success_count=10000
+error_count=0
+timeout_count=0
+
+rps=260.192
+latency_success_samples=10000
+avg_latency_ms=367.180
+p50_latency_ms=344
+p95_latency_ms=704
+p99_latency_ms=1074
+max_latency_ms=2391
+
+status_2xx=10000
+status_4xx=0
+status_5xx=0
+
+cache_hit_count=9959
+cache_miss_count=41
+cache_samples=10000
+token_weighted_prefix_hit_rate=0.998216
+request_avg_prefix_hit_rate=0.995549
+matched_prefix_depth_avg=7189.104300
+matched_prefix_depth_p95=1252
+avoided_prefill_tokens=289152183
+best_gap_samples=0
+best_possible_prefix_tokens=0
+cache_gap_tokens=0
+avg_cache_gap_rate=
+misroute_samples=0
+misroute_rate=
+
+selected_target_pods:
+  pod_id=0 count=2224
+  pod_id=1 count=2054
+  pod_id=2 count=2894
+  pod_id=3 count=1834
+  pod_id=4 count=994
+
+selected_prefill_pods:
+
+selected_decode_pods:
+
+csv=benchmark/results/single-mixed/url_bench.csv
+Generating plots for 10000 requests → benchmark/results/single-mixed
+Done — 7 plots saved to benchmark/results/single-mixed/
