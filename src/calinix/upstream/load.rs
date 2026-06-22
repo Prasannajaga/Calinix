@@ -51,7 +51,7 @@ impl LoadState {
         }
     }
 
-    fn decrement(&self, pod_id: PodId) {
+    pub(crate) fn decrement(&self, pod_id: PodId) {
         if let Some(inflight) = self.inflight.get(pod_id as usize) {
             inflight
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -73,26 +73,4 @@ impl Drop for InflightGuard<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::LoadState;
 
-    #[test]
-    fn guard_increments_and_decrements_inflight() {
-        let loads = LoadState::new(2);
-        assert_eq!(loads.inflight(1), 0);
-        {
-            let _guard = loads.track(1).expect("pod exists");
-            assert_eq!(loads.inflight(1), 1);
-        }
-        assert_eq!(loads.inflight(1), 0);
-    }
-
-    #[test]
-    fn guard_drop_never_underflows() {
-        let loads = LoadState::new(1);
-        loads.set_inflight_for_test(0, 0);
-        loads.decrement(0);
-        assert_eq!(loads.inflight(0), 0);
-    }
-}

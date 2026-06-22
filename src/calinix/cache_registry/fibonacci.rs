@@ -30,13 +30,4 @@ pub fn shard_for_with_count(hash: BlockHash, shard_count: usize) -> usize {
     shard_for_fibonacci_with_count(hash, shard_count)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{shard_for_with_count, DEFAULT_SHARD_COUNT};
 
-    #[test]
-    fn shard_is_inside_runtime_range() {
-        assert!(shard_for_with_count(42, DEFAULT_SHARD_COUNT) < DEFAULT_SHARD_COUNT);
-        assert!(shard_for_with_count(u64::MAX, 17) < 17);
-    }
-}

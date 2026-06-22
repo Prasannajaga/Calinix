@@ -89,34 +89,4 @@ fn cache_namespace(model: Option<&str>, block_size: usize) -> String {
     format!("openai:{model}:whitespace-v1:block-{block_size}")
 }
 
-#[cfg(test)]
-mod tests {
-    use http::HeaderMap;
 
-    use super::{PrepareInput, PrepareStage};
-    use crate::protocol::routing_headers::CalinixMode;
-
-    #[test]
-    fn prepare_builds_routing_context_without_body() {
-        let stage = PrepareStage {
-            default_mode: CalinixMode::Single,
-            block_size: 2,
-        };
-        let body = br#"{"model":"m","prompt":"one two three four five"}"#;
-
-        let prepared = stage
-            .run(PrepareInput {
-                path: "/v1/completions",
-                method: "POST",
-                headers: &HeaderMap::new(),
-                body,
-            })
-            .unwrap();
-
-        assert_eq!(prepared.ctx.cumulative_hashes.len(), 3);
-        assert_eq!(
-            prepared.ctx.cache_namespace,
-            "openai:m:whitespace-v1:block-2"
-        );
-    }
-}
