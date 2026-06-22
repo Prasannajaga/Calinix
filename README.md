@@ -123,29 +123,34 @@ Since the hashes are cumulative, a match at `hash_2` guarantees that the *entire
 
 ## Performance & Benchmarks
 
-I've run more experiments on the benchmarks and found this configuration (`new-policy-v3`) is the best. To see more detailed benchmark results and the step-by-step optimization journey, see [bench.md](./bench.md).
+I've run more experiments on the benchmarks and found this configuration (`new-policy-v3`) is the best. Each benchmark scenario is evaluated by executing exactly **1,000 requests (or operations) per concurrency level** on a cluster topology of 16 synthetic upstreams, utilizing a 256-shard cache index. 
+
+To see more detailed benchmark results and the step-by-step optimization journey, see [bench.md](./bench.md).
 
 ### 1. Routing Decision Latency
 
-* **1 Concurrency:** ~273 µs
+*Tested with 1,000 routing operations per concurrency level:*
 
+* **1 Concurrency:** ~273 µs
 * **12 Concurrency:** ~534 µs
 * **128 Concurrency:** ~2.45 ms (p50: 454 µs)
 
 ![Routing Latency](benchmark/results/new-policy-v3/policy_router_latency.png)
 
-### 2. Lock Contention (256-shard index with 128 threads)
+### 2. Lock Contention (256-shard index with 128 reader / 32 writer threads)
+
+*Tested with 1,000 read queries and 250 write updates per concurrency level (at 128 concurrency, this sweeps to 128 concurrent reader threads and 32 writer threads):*
 
 * **Read Queries:** < 2 µs
-
 * **Write Updates:** < 70 µs
 
 ![Index Contention](benchmark/results/new-policy-v3/policy_index_contention.png)
 
 ### 3. Load Fairness & Cache Hits
 
-* **Jain Fairness Index:** 0.751 (vs 0.076 for cache-only)
+*Tested with 1,000 requests under a hot-prefix load distribution (90% skew towards the hot prefix):*
 
+* **Jain Fairness Index:** 0.751 (vs 0.076 for cache-only)
 * **Cache Hit Rate:** ~100% (under hot prefix load)
 
 ![Cluster Fairness](benchmark/results/new-policy-v3/policy_fairness.png)
