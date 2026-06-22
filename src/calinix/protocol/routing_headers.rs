@@ -185,41 +185,4 @@ fn insert(headers: &mut HeaderMap, name: &'static str, value: &str) -> Result<()
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use http::{HeaderMap, HeaderValue};
 
-    use super::{
-        inject_routing_headers, CalinixMode, RoutingHeaderValues, DECODE_POD_ID, PREFILL_POD_ID,
-        REQUEST_ID, TARGET_POD_ID,
-    };
-
-    #[test]
-    fn overwrites_calinix_headers_and_preserves_user_headers() {
-        let mut headers = HeaderMap::new();
-        headers.insert("authorization", HeaderValue::from_static("Bearer user"));
-        headers.insert(REQUEST_ID, HeaderValue::from_static("old"));
-
-        inject_routing_headers(
-            &mut headers,
-            &RoutingHeaderValues {
-                request_id: "new".to_string(),
-                mode: CalinixMode::Single,
-                target_pod_id: Some("7".to_string()),
-                prefill_pod_id: None,
-                decode_pod_id: None,
-                cache_hit: true,
-                cache_prefix_depth: 3,
-                cache_namespace: Some("ns".to_string()),
-                route_policy: "default".to_string(),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(headers.get("authorization").unwrap(), "Bearer user");
-        assert_eq!(headers.get(REQUEST_ID).unwrap(), "new");
-        assert_eq!(headers.get(TARGET_POD_ID).unwrap(), "7");
-        assert!(!headers.contains_key(PREFILL_POD_ID));
-        assert!(!headers.contains_key(DECODE_POD_ID));
-    }
-}

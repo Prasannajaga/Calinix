@@ -55,30 +55,4 @@ pub fn prompt_to_token_blocks_with_size(prompt: &str, block_size: usize) -> Vec<
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
 
-    use super::{hash_block, prompt_to_block_hashes, tokenize, DEFAULT_BLOCK_SIZE};
-
-    #[test]
-    fn prompt_is_split_into_configured_token_blocks() {
-        let hashes = prompt_to_block_hashes("one two three four five", None);
-
-        assert_eq!(DEFAULT_BLOCK_SIZE, 4);
-        assert_eq!(hashes.len(), 2);
-        assert_ne!(hashes[0], hashes[1]);
-    }
-
-    #[test]
-    fn testing() {
-        let prompt = "Explain the kuberenetes";
-        let block_size = 3;
-
-        let tokenize = tokenize(prompt);
-        let block_split = tokenize.chunks(block_size);
-        let block_hashes: Vec<_> = block_split.map(hash_block).collect();
-
-        println!("tokenize={:?}", tokenize);
-        println!("block_hashes={:?}", block_hashes);
-    }
-}

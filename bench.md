@@ -37,7 +37,7 @@ To finally smash the 1ms target, we went through the hot path and eliminated all
   2. **Stack-Allocated Bitmaps:** We replaced `Vec<u64>` with a stack-allocated, fixed-size 256-bit bitmap structure (`HostBitmap` implemented as `[u64; 4]`), which reduced p99 bitmap operations by ~5.8x.
   3. **Single-Pass Cumulative Hash Streaming:** We rewrote the token block splitting and FNV-1a cumulative chain generation into a single streaming loop, eliminating intermediate vector allocations.
 
-* **The Results (from `new-policy-v3/policy_bench.csv`):**
+* **The Results (from `new-policy-v3/policy_bench.csv` using 1,000 requests per concurrency level):**
   * **1 Concurrency:** Average latency of **273 µs** (with p50 at 268 µs).
   * **12 Concurrency:** Average latency of **534 µs** (well under our 1ms target).
   * **128 Concurrency:** Average latency of **2.45 ms** (with p50 at **454 µs**).

@@ -166,22 +166,4 @@ impl CacheRegistry {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{prompt_to_cumulative_hashes, CacheRegistry, HostBitmap};
 
-    #[test]
-    fn cache_registry_scores_prefix_depths() {
-        let registry = CacheRegistry::new(3);
-        let hashes =
-            prompt_to_cumulative_hashes("one two three four five six seven eight nine ten");
-
-        registry.register_chain(0, &hashes);
-        registry.register_prefix(1, hashes[0]);
-
-        let depths = registry.longest_prefix_lengths(&hashes, HostBitmap::full_for_count(3));
-        assert_eq!(depths[0], hashes.len());
-        assert_eq!(depths[1], 1);
-        assert_eq!(depths[2], 0);
-    }
-}

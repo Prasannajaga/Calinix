@@ -14,20 +14,20 @@ use crate::config::HealthConfig;
 use crate::upstream::{PodEndpoint, PodId, RuntimeRegistry};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HealthResult {
+pub(crate) enum HealthResult {
     Healthy,
     Unhealthy,
 }
 
 #[derive(Clone, Debug)]
-struct PodHealthState {
+pub(crate) struct PodHealthState {
     consecutive_successes: u8,
     consecutive_failures: u8,
     marked_alive: bool,
 }
 
 impl PodHealthState {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             consecutive_successes: 0,
             consecutive_failures: 0,
@@ -35,7 +35,7 @@ impl PodHealthState {
         }
     }
 
-    fn observe(
+    pub(crate) fn observe(
         &mut self,
         result: HealthResult,
         healthy_threshold: u8,
@@ -111,7 +111,7 @@ pub fn start_health_poller(registry: Arc<RuntimeRegistry>, config: HealthConfig)
 
 type HealthClient = Client<HttpConnector, Empty<Bytes>>;
 
-fn apply_health_result(
+pub(crate) fn apply_health_result(
     registry: &RuntimeRegistry,
     states: &mut [PodHealthState],
     pod_id: PodId,
@@ -171,7 +171,7 @@ async fn get_health_status(
     Ok(response.status().as_u16())
 }
 
-fn health_uri(url: &str, endpoint: &str) -> Result<Uri, String> {
+pub(crate) fn health_uri(url: &str, endpoint: &str) -> Result<Uri, String> {
     let (host, port, base_path) = parse_http_url(url)?;
     let request_path = join_paths(&base_path, endpoint);
     format!("http://{host}:{port}{request_path}")
@@ -179,7 +179,7 @@ fn health_uri(url: &str, endpoint: &str) -> Result<Uri, String> {
         .map_err(|err| format!("invalid health URI for {url}: {err}"))
 }
 
-fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
+pub(crate) fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| format!("only http:// upstream URLs are supported: {url}"))?;
@@ -195,7 +195,7 @@ fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
     Ok((host, port, format!("/{path}")))
 }
 
-fn join_paths(base_path: &str, endpoint: &str) -> String {
+pub(crate) fn join_paths(base_path: &str, endpoint: &str) -> String {
     let base_path = normalize_path(base_path);
     let endpoint = normalize_path(endpoint);
     if base_path == "/" {
@@ -215,103 +215,4 @@ fn normalize_path(path: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
 
-    use super::{apply_health_result, health_uri, join_paths, parse_http_url, PodHealthState};
-    use crate::cache_registry::{CacheRegistry, HostBitmap};
-    use crate::upstream::health::HealthResult;
-    use crate::upstream::{PodEndpoint, PodTable, RuntimeRegistry, UpstreamCatalog};
-
-    #[test]
-    fn joins_base_path_and_health_endpoint() {
-        assert_eq!(join_paths("/", "/health"), "/health");
-        assert_eq!(join_paths("/vllm", "/health"), "/vllm/health");
-        assert_eq!(join_paths("/vllm/", "health"), "/vllm/health");
-    }
-
-    #[test]
-    fn parses_http_url_with_default_port() {
-        assert_eq!(
-            parse_http_url("http://prefill-1").unwrap(),
-            ("prefill-1".to_string(), 80, "/".to_string())
-        );
-        assert_eq!(
-            parse_http_url("http://prefill-1:8000/api").unwrap(),
-            ("prefill-1".to_string(), 8000, "/api".to_string())
-        );
-    }
-
-    #[test]
-    fn builds_health_uri_from_upstream_url_and_endpoint() {
-        assert_eq!(
-            health_uri("http://prefill-1:8000", "/health")
-                .unwrap()
-                .to_string(),
-            "http://prefill-1:8000/health"
-        );
-        assert_eq!(
-            health_uri("http://prefill-1:8000/vllm", "/health")
-                .unwrap()
-                .to_string(),
-            "http://prefill-1:8000/vllm/health"
-        );
-    }
-
-    #[test]
-    fn thresholds_emit_only_on_state_changes() {
-        let mut state = PodHealthState::new();
-        assert_eq!(state.observe(HealthResult::Healthy, 2, 2), None);
-        assert_eq!(state.observe(HealthResult::Healthy, 2, 2), Some(true));
-        assert_eq!(state.observe(HealthResult::Healthy, 2, 2), None);
-        assert_eq!(state.observe(HealthResult::Unhealthy, 2, 2), None);
-        assert_eq!(state.observe(HealthResult::Unhealthy, 2, 2), Some(false));
-    }
-
-    #[test]
-    fn health_result_thresholds_update_registry_alive_state() {
-        let registry = RuntimeRegistry {
-            pod_table: PodTable {
-                pods: vec![PodEndpoint {
-                    id: 0,
-                    pod_id: 0,
-                    address: "http://pod-0:8000".to_string(),
-                    healthy: true,
-                    draining: false,
-                    max_conns: 100,
-                    capabilities: crate::upstream::PodCapabilities::single(),
-                }],
-                by_external_id: HashMap::new(),
-            },
-            upstreams: UpstreamCatalog::default(),
-            single_pods: HostBitmap::full_for_count(1),
-            prefill_pods: HostBitmap::empty(),
-            decode_pods: HostBitmap::empty(),
-            cache_registry: CacheRegistry::new_empty_alive(1),
-        };
-        let mut states = vec![PodHealthState::new()];
-
-        apply_health_result(
-            &registry,
-            &mut states,
-            0,
-            "http://pod-0:8000".to_string(),
-            HealthResult::Healthy,
-            1,
-            1,
-        );
-        assert!(registry.cache_registry.alive().contains(0));
-
-        apply_health_result(
-            &registry,
-            &mut states,
-            0,
-            "http://pod-0:8000".to_string(),
-            HealthResult::Unhealthy,
-            1,
-            1,
-        );
-        assert!(!registry.cache_registry.alive().contains(0));
-    }
-}
